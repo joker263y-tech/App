@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Compiles the REAL core sources from Assets/Scripts/Core, using the same
+    constraints Unity 6 imposes:
+      * netstandard2.1 -> Unity's API profile. Using a .NET 10-only API here
+        fails, instead of failing later inside the editor.
+      * LangVersion 9.0 -> Unity 6 ships C# 9. C# 10+ syntax (file-scoped
+        namespaces, record structs, global usings, raw strings) fails here.
+    Plus an explicit purity gate that mirrors the asmdef's noEngineReferences.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>Shadowbound.Core</AssemblyName>
+    <RootNamespace>Shadowbound.Core</RootNamespace>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <DebugType>portable</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)../../Assets/Scripts/Core/**/*.cs" />
+    <!-- Unity's .meta sidecars are not source. -->
+    <Compile Remove="$(MSBuildThisFileDirectory)../../Assets/Scripts/Core/**/*.meta" />
+  </ItemGroup>
+
+  <Target Name="EnforceCorePurity" BeforeTargets="BeforeCompile">
+    <Exec Command="bash &quot;$(MSBuildThisFileDirectory)../../Tools/check-core-purity.sh&quot;" />
+  </Target>
+
+</Project>

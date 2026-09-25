@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A syntax gate for the Unity-only sources.
+
+    The Game and Editor assemblies reference UnityEngine, so dotnet cannot
+    compile them without a Unity installation. Roslyn can still parse them, which
+    catches syntax errors, unsupported language features and unbalanced braces
+    before Unity is ever opened.
+
+    This is a parse, not a compile: it proves the files are valid C# at Unity 6's
+    language level. It does not prove that the APIs they call exist.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>Shadowbound.SyntaxCheck</AssemblyName>
+    <RootNamespace>Shadowbound.SyntaxCheck</RootNamespace>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
+  </ItemGroup>
+
+</Project>

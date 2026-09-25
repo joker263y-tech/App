@@ -40,7 +40,12 @@ jobs:
       - name: Set up .NET SDK
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 10.0.x
+          # 10.0.x builds everything (it is what the project is developed with),
+          # but the test suite and the syntax gate target net9.0 and need the
+          # 9.0 runtime to actually RUN, not just compile.
+          dotnet-version: |
+            10.0.x
+            9.0.x
 
       - name: Core purity gate (core must stay engine-free)
         run: bash Tools/check-core-purity.sh

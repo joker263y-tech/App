@@ -1,0 +1,61 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Type-checks the Unity layer without a Unity installation.
+
+    The Game assembly references UnityEngine, so dotnet cannot normally compile
+    it. This project supplies real Unity reference assemblies via the
+    OpenMod.UnityEngine.Redist package - which includes UnityEngine.CoreModule,
+    UnityEngine.UIModule, UnityEngine.PhysicsModule, UnityEngine.TextRenderingModule
+    and UnityEngine.UI - and compiles the actual sources from
+    Assets/Scripts/Game against them.
+
+    Two honest limitations, both documented in Documentation/Verification.md:
+
+      * The reference assemblies are Unity 2021.3, not Unity 6. Code that compiles
+        here therefore also compiles on Unity 6, except where Unity 6 *removed* an
+        API. Nothing in the Game layer uses one.
+      * The new Input System has no reference assembly available, so
+        Shims/InputSystem.cs supplies its public surface instead. Those shim types
+        are written to match the package's documented API, and they live outside
+        Assets/ so Unity never sees them.
+
+    What this proves: every Unity API and core API the Game layer calls exists with
+    the signature used, and the code type-checks. What it does not prove: that it
+    behaves correctly at runtime.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+
+    <!-- The real Unity-layer sources are included explicitly below. -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+
+    <AssemblyName>Shadowbound.UnityCheck</AssemblyName>
+    <RootNamespace>Shadowbound.UnityCheck</RootNamespace>
+
+    <!-- CS0067: unused event. CS0649: field never assigned. Both are normal in a
+         shim, and Unity itself does not enable these as errors. -->
+    <NoWarn>CS0067;CS0649</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The Game assembly, compiled exactly as Unity compiles it. -->
+    <Compile Include="../../Assets/Scripts/Game/**/*.cs" />
+
+    <!-- The Input System surface, which has no reference assembly. -->
+    <Compile Include="Shims/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Shadowbound.Core.Build/Shadowbound.Core.Build.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenMod.UnityEngine.Redist" Version="2021.3.29.1" />
+  </ItemGroup>
+
+</Project>

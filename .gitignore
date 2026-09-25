@@ -82,6 +82,16 @@ Tests/**/obj/
 *.coverage
 *.nupkg
 
+# The test and verification harness PROJECT files are hand-authored sources,
+# not Unity-generated ones. The blanket *.csproj above exists because Unity
+# writes a csproj per assembly; it must not swallow these four. Without them a
+# fresh clone cannot build or run its own test suite - which is exactly what the
+# first CI run found.
+!Tests/Shadowbound.Core.Build/Shadowbound.Core.Build.csproj
+!Tests/Shadowbound.Core.Tests/Shadowbound.Core.Tests.csproj
+!Tests/Shadowbound.UnityCheck/Shadowbound.UnityCheck.csproj
+!Tools/SyntaxCheck/SyntaxCheck.csproj
+
 # Local override files
 *.local.json
 .env
