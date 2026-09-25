@@ -55,6 +55,18 @@ namespace Shadowbound.Core.Stats
             return new StatModifier(stat, ModifierOp.PercentMultiplicative, value, source);
         }
 
+        /// <summary>
+        /// Returns this modifier owned by a different source.
+        ///
+        /// Authored item definitions hold modifier templates with no source, and
+        /// each equipped instance rebinds them to its own token so that
+        /// unequipping removes exactly what equipping added.
+        /// </summary>
+        public StatModifier WithSource(object source)
+        {
+            return new StatModifier(Stat, Op, Value, source);
+        }
+
         public override string ToString()
         {
             return StatIds.Name(Stat) + " " + Op + " " + Value.ToString("0.###");
