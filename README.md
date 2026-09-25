@@ -22,7 +22,7 @@ combat, semi-open world, story-driven PvE.
 | Unity layer (input, camera, views, HUD, menu, saves) | **Type-checks against real Unity assemblies** — never executed |
 | In-game menu (equipment, consumables, attributes, save/load, resume) | Written — never executed |
 | Editor tooling (scene setup, Android config, CI build entry) | Written — **not compiled** (no UnityEditor reference assembly) |
-| GitHub Actions CI (verify + APK build via game-ci) | Written — **never executed** (nothing has been pushed yet) |
+| GitHub Actions CI (verify + APK build via game-ci) | **Running** — verify passes on GitHub (563 tests); Android job awaits a Unity licence secret |
 | Android APK | **Not produced** — requires Unity with the Android module, or the CI `android` job with a Unity licence secret |
 
 ### Read this before assuming it works

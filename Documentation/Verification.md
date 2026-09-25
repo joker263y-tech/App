@@ -184,6 +184,26 @@ That distinction matters: a validator that reports "clean" is worthless unless i
 is also proven to fail when something is wrong. The clean result on the shipped
 content now means something.
 
+## Continuous integration: what actually ran
+
+The workflow has now executed on GitHub, and its first run earned its keep
+immediately:
+
+- **Run 1 (`3fe0355`) — failed.** `MSBUILD : error MSB1009: Project file does
+  not exist.` The blanket `*.csproj` ignore rule — present because Unity
+  generates a csproj per assembly — had swallowed the four hand-authored harness
+  projects, so the pushed repository **could not build its own test suite**. The
+  files existed locally and every local gate passed; that is exactly the
+  difference between "works here" and "works from a fresh clone". Fixed by
+  un-ignoring them (`e1d6850`).
+- **Run 2 (`e1d6850`) — passed.** verify: all four gates green on GitHub's
+  runner (purity, 563 tests, syntax, Unity layer type-check). licence-check:
+  passed. android: **skipped** — no Unity licence secret configured, as designed.
+
+The gates are therefore now verified to run on a clean machine from the pushed
+repository, not only in the workspace they were written in. The `android` job
+has still never executed.
+
 ## What has NOT been run
 
 Be explicit about this, because the gaps are real.
@@ -194,7 +214,7 @@ Be explicit about this, because the gaps are real.
 | **Runtime behaviour of anything** | No Unity installation. Nothing in the project has ever executed. | Press Play. |
 | **Anything visual** | Same reason. No rendering. | Press Play. |
 | **The Android build** | No Unity, no Android SDK, no NDK, no JDK. No APK can be produced without them. | `Shadowbound → Build Android APK` with the Android module installed, or the CI `android` job. |
-| **The GitHub Actions workflow** | `.github/workflows/ci.yml` is written but has **never executed** — no push has reached GitHub yet (credentials unavailable at the time of writing), and no Actions run has been observed. Its YAML parses and its commands are the same ones listed above, but that is not the same as a run. | Push the repository and read the Actions tab. |
+| **The GitHub Actions `android` job** | It **skips** on every run: no Unity licence secret is configured yet. The workflow's other jobs have run — see "Continuous integration: what actually ran" below. | Add a `UNITY_LICENSE` (or `UNITY_SERIAL`) repository secret. |
 | **`ProjectSetup.BuildAndroidFromCommandLine`** | Part of the Editor assembly, which has never compiled anywhere. | The CI `android` job, or Unity's Console. |
 | **Touch controls on a device** | Requires hardware. | Install the APK and play. |
 | **Performance on target hardware** | Requires hardware. | Profile on a mid-range phone. |
