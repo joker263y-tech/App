@@ -74,7 +74,30 @@ namespace Shadowbound.Core.Combat
 
         public StatSet Stats { get; private set; }
 
+        /// <summary>
+        /// This combatant's resistance profile.
+        ///
+        /// Read-only by reference on purpose: the health pool holds the same
+        /// instance, so replacing it would leave damage resolution reading the old
+        /// one and silently ignore the change. Use
+        /// <see cref="CopyResistancesFrom"/> to change the values.
+        /// </summary>
         public ResistanceSet Resistances { get; private set; }
+
+        /// <summary>Copies a resistance profile's values into this combatant's own profile.</summary>
+        public void CopyResistancesFrom(ResistanceSet source)
+        {
+            if (source == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < DamageTypes.All.Length; i++)
+            {
+                DamageType type = DamageTypes.All[i];
+                Resistances.Set(type, source.Get(type));
+            }
+        }
 
         public Vitals Vitals { get; private set; }
 
