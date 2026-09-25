@@ -90,6 +90,19 @@ namespace Shadowbound.Core.Tests.Simulation
                 new DeterministicRng(20250925),
                 WorldBounds.Square(50f));
 
+            // The automatic quest lifecycle is deliberately off here.
+            //
+            // These tests are about the session's reward plumbing: a kill turning
+            // into experience, loot and journal progress, and a quest being turned in
+            // by hand. Leaving automatic advancement on would claim rewards mid-test
+            // and change the experience totals these tests assert on, which would
+            // make them pass or fail for reasons unrelated to what they examine.
+            //
+            // The automatic lifecycle - turning in, granting, and unlocking the next
+            // quest - has its own class, QuestAdvancementTests, where it is the
+            // subject rather than a side effect.
+            session.AutoAdvanceQuests = false;
+
             session.RegisterLootTable(BuildWalkerLoot());
 
             if (lootTables != null)

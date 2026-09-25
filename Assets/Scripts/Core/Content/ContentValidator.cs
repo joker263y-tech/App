@@ -579,6 +579,7 @@ namespace Shadowbound.Core.Content
                 {
                     // Interact and Survive objectives are legitimately targetless.
                     if (objective.Kind == ObjectiveKind.Kill ||
+                        objective.Kind == ObjectiveKind.DefeatBoss ||
                         objective.Kind == ObjectiveKind.Collect ||
                         objective.Kind == ObjectiveKind.Reach)
                     {
@@ -591,6 +592,10 @@ namespace Shadowbound.Core.Content
                 switch (objective.Kind)
                 {
                     case ObjectiveKind.Kill:
+                    case ObjectiveKind.DefeatBoss:
+                        // Both name a creature, so both are checked against the
+                        // archetypes. Missing this case is how a boss objective with
+                        // a typo'd target would slip through unvalidated.
                         if (!archetypeIds.Contains(objective.TargetId))
                         {
                             report.Error(

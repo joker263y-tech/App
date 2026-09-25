@@ -32,6 +32,14 @@ namespace Shadowbound.Core.Simulation
         private readonly Dictionary<string, LootTable> _lootTables;
         private readonly List<ItemStack> _lootBuffer;
 
+        /// <summary>
+        /// Guards against a re-entrant call into <see cref="AdvanceQuests"/> from
+        /// inside it. Claiming a reward can add items, which can complete a collect
+        /// objective, which must then also be turned in - the outer loop drains that
+        /// rather than the inner call recursing into it.
+        /// </summary>
+        private bool _advancingQuests;
+
         public GameSession(
             Combatant player,
             ItemDatabase items,
@@ -116,6 +124,21 @@ namespace Shadowbound.Core.Simulation
         /// <summary>Raised with the number of levels gained from experience.</summary>
         public event Action<int> LevelledUp;
 
+        /// <summary>Raised for each quest whose reward has just been claimed.</summary>
+        public event Action<QuestState> QuestTurnedIn;
+
+        /// <summary>
+        /// Whether finished quests are turned in automatically, granting their
+        /// rewards and offering whatever they unlock.
+        ///
+        /// This defaults to on because a quest only becomes startable once its
+        /// prerequisite has been TURNED IN, and this build has no quest-giver to do
+        /// the turning in. Without it the player finishes the opening quest, receives
+        /// nothing, and no further quest ever becomes available - the whole story is
+        /// unreachable. Turn it off once a quest-giver hands out the next task.
+        /// </summary>
+        public bool AutoAdvanceQuests { get; set; } = true;
+
         // -------------------------------- configuration ---------------------------
 
         public void RegisterLootTable(LootTable table)
@@ -151,7 +174,121 @@ namespace Shadowbound.Core.Simulation
                 PlaytimeSeconds += deltaTime;
             }
 
+            // A safety net for any path that moved a quest along without going
+            // through one of the explicit call sites. Cheap: a handful of quests.
+            AdvanceQuests();
+
             return steps;
+        }
+
+        // ------------------------------ quest lifecycle ---------------------------
+
+        /// <summary>
+        /// Claims the reward for every finished quest, then starts whatever that
+        /// makes available. Returns how many quests changed state.
+        ///
+        /// Two things happen here and both matter. A completed quest is turned in,
+        /// which is the only moment its experience, attribute points and items are
+        /// actually granted. And turning one in is what makes its dependants
+        /// startable, so the loop repeats: finish a quest, claim it, and the next one
+        /// in the chain becomes available.
+        ///
+        /// Without this the game had exactly one playable quest. Every quest after
+        /// the first requires its predecessor to be *turned in*, nothing performed
+        /// that step, and so the story could not progress past the opening scene.
+        /// </summary>
+        public int AdvanceQuests()
+        {
+            if (!AutoAdvanceQuests || _advancingQuests)
+            {
+                return 0;
+            }
+
+            _advancingQuests = true;
+
+            try
+            {
+                int advances = 0;
+
+                // Bounded by the quest count: each pass turns one quest in or starts
+                // one, and no quest can do either twice.
+                int limit = (Quests.All.Count * 2) + 2;
+
+                for (int guard = 0; guard < limit; guard++)
+                {
+                    QuestState completed = FindCompletedAwaitingTurnIn();
+
+                    if (completed != null)
+                    {
+                        string questId = completed.Definition.Id;
+
+                        if (Quests.TryTurnIn(questId, out QuestReward reward))
+                        {
+                            advances++;
+
+                            // Announced before the reward, so the journal message
+                            // reads before the loot that came with it.
+                            QuestTurnedIn?.Invoke(completed);
+
+                            GrantReward(reward);
+                            continue;
+                        }
+                    }
+
+                    QuestState startable = FindNextStartable();
+
+                    if (startable != null && Quests.TryStart(startable.Definition.Id))
+                    {
+                        advances++;
+                        continue;
+                    }
+
+                    break;
+                }
+
+                if (advances > 0)
+                {
+                    Chapters.Refresh();
+                }
+
+                return advances;
+            }
+            finally
+            {
+                _advancingQuests = false;
+            }
+        }
+
+        private QuestState FindCompletedAwaitingTurnIn()
+        {
+            IReadOnlyList<QuestState> all = Quests.All;
+
+            for (int i = 0; i < all.Count; i++)
+            {
+                if (all[i].Status == QuestStatus.Completed)
+                {
+                    return all[i];
+                }
+            }
+
+            return null;
+        }
+
+        private QuestState FindNextStartable()
+        {
+            IReadOnlyList<QuestState> all = Quests.All;
+
+            for (int i = 0; i < all.Count; i++)
+            {
+                QuestState state = all[i];
+
+                if (state.Status == QuestStatus.Locked && Quests.IsStartable(state.Definition.Id))
+                {
+                    return state;
+                }
+            }
+
+            return null;
         }
 
         // ------------------------------ reward plumbing ---------------------------
@@ -191,6 +328,7 @@ namespace Shadowbound.Core.Simulation
             }
 
             Chapters.Refresh();
+            AdvanceQuests();
         }
 
         /// <summary>Rolls a victim's loot table and puts what it yields into the bag.</summary>
@@ -235,6 +373,11 @@ namespace Shadowbound.Core.Simulation
 
             LootGranted?.Invoke(new ItemStack(itemId, accepted));
             SyncCollectionObjectives();
+
+            // Collect objectives are satisfied by holding an item, so picking the
+            // last one up can finish the quest then and there.
+            AdvanceQuests();
+
             return accepted;
         }
 
@@ -299,6 +442,106 @@ namespace Shadowbound.Core.Simulation
             }
         }
 
+        // -------------------------------- equipment -------------------------------
+
+        /// <summary>
+        /// Moves an item out of the bag and onto the character, putting whatever it
+        /// replaces back into the bag. Returns false and leaves everything untouched
+        /// when the item cannot be equipped.
+        ///
+        /// The swap is one transaction rather than an equip followed by a separate
+        /// attempt to stow the old item. Equipping first would destroy the replaced
+        /// item every time the bag is full - which is precisely the situation a player
+        /// is in when they finally find an upgrade.
+        ///
+        /// This lives here rather than in the UI because it is the rule that decides
+        /// whether an item can be lost, and rules belong where they can be tested.
+        /// </summary>
+        public bool TryEquipFromInventory(string itemId, out EquipFailure failure)
+        {
+            failure = EquipFailure.UnknownItem;
+
+            if (string.IsNullOrEmpty(itemId) || !Items.TryGet(itemId, out ItemDefinition definition))
+            {
+                return false;
+            }
+
+            if (!definition.Slot.HasValue)
+            {
+                failure = EquipFailure.NotEquippable;
+                return false;
+            }
+
+            EquipSlot slot = definition.Slot.Value;
+
+            if (!Inventory.Has(itemId))
+            {
+                // Not held, so there is nothing to move. Reported as unknown rather
+                // than as a slot problem, because the slot is fine.
+                return false;
+            }
+
+            // Validated before anything moves, so a rejected equip leaves the bag and
+            // the loadout exactly as they were.
+            failure = Equipment.CanEquip(slot, definition);
+
+            if (failure != EquipFailure.None)
+            {
+                return false;
+            }
+
+            if (Inventory.Remove(itemId, 1) <= 0)
+            {
+                return false;
+            }
+
+            if (!Equipment.TryEquip(slot, definition, out ItemDefinition replaced, out failure))
+            {
+                // Put it back rather than letting a failed equip swallow it.
+                Inventory.Add(itemId, 1);
+                return false;
+            }
+
+            if (replaced != null)
+            {
+                // Removing the new item freed the slot it occupied, so whatever it
+                // replaced always has somewhere to go. When the two are the same item
+                // id this is simply a second copy going back in the bag.
+                Inventory.Add(replaced.Id, 1);
+                SyncCollectionObjectives();
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Returns the item in a slot to the bag. Fails rather than destroying it when
+        /// there is nowhere to put it.
+        /// </summary>
+        public bool TryUnequipToInventory(EquipSlot slot)
+        {
+            if (Equipment.IsEmpty(slot))
+            {
+                return false;
+            }
+
+            if (!Equipment.TryUnequip(slot, out ItemDefinition removed) || removed == null)
+            {
+                return false;
+            }
+
+            if (Inventory.Add(removed.Id, 1) <= 0)
+            {
+                // Nowhere to put it, so it goes straight back on. Silently dropping it
+                // would be a real loss of a real item.
+                Equipment.TryEquip(slot, removed, out _, out _);
+                return false;
+            }
+
+            SyncCollectionObjectives();
+            return true;
+        }
+
         // -------------------------------- collection ------------------------------
 
         /// <summary>True when the encounter has no living hostiles left.</summary>
@@ -325,6 +568,7 @@ namespace Shadowbound.Core.Simulation
 
             Quests.Report(QuestEvent.Reach(regionId));
             Chapters.Refresh();
+            AdvanceQuests();
             return true;
         }
 
@@ -399,6 +643,10 @@ namespace Shadowbound.Core.Simulation
 
             SyncCollectionObjectives();
             Chapters.Refresh();
+
+            // A save taken between completing a quest and claiming it would
+            // otherwise load into a state where the reward is permanently stranded.
+            AdvanceQuests();
         }
 
         private List<QuestSnapshot> CollectQuestSnapshots()
