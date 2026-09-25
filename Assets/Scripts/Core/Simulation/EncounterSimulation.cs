@@ -309,8 +309,9 @@ namespace Shadowbound.Core.Simulation
             Participant participant = Attach(combatant, abilities, attackAbilityIndex);
 
             // Each enemy gets its own generator stream, so changing one enemy's
-            // behaviour cannot shift the patrol route of another.
-            ulong stream = (ulong)combatant.Id.GetHashCode() | 1UL;
+            // behaviour cannot shift the patrol route of another. The hash must be
+            // process-stable or the same seed would play out differently each launch.
+            ulong stream = DeterministicRng.StableHash(combatant.Id) | 1UL;
             participant.Brain = new EnemyBrain(brainSettings, Rng.Fork(stream));
 
             return participant;

@@ -3,10 +3,11 @@
 An original dark-fantasy 3D action RPG for Android. Third-person, real-time
 combat, semi-open world, story-driven PvE.
 
-> **Original work.** This project is inspired by the broad atmosphere and
-> design principles of the dark-fantasy genre. All characters, factions,
-> creatures, regions, mythology, terminology, dialogue and visual identity are
-> original creations. Nothing is copied from any existing work.
+> **Original work.** Inspired by the broad atmosphere and design principles of
+> the dark-fantasy genre. All characters, factions, creatures, regions,
+> mythology, terminology, dialogue and visual identity are original creations.
+> Nothing is copied from any existing work. See
+> [Documentation/Design.md](Documentation/Design.md).
 
 ---
 
@@ -14,105 +15,104 @@ combat, semi-open world, story-driven PvE.
 
 | Area | State |
 | --- | --- |
-| Repository + Unity project scaffolding | Done |
-| Pure-C# game-logic core | In progress |
-| Core test suite | Running green (16 tests) |
-| Unity layer (MonoBehaviour adapters) | Not started |
-| Procedural content bootstrap | Not started |
-| Android build | Not started |
+| Repository + Unity 6 project scaffolding | Done |
+| Pure-C# game-logic core (combat, AI, items, quests, world, saves) | **Done — 482 tests passing** |
+| Headless encounter + session integration | Done, tested |
+| Authored content (creatures, items, quests, chapters, regions) | Done, validated |
+| Unity layer (input, camera, views, HUD, saves) | Written — **not yet compiled** |
+| Editor tooling (scene setup, Android config, content validation) | Written — **not yet compiled** |
+| Android APK | **Not produced** — requires Unity with the Android module |
 
-The game is **not yet playable**. See [Roadmap](#roadmap).
+### Read this before assuming it works
 
----
+The **game rules are verified by execution**: `Tools/test-core.sh` compiles the
+real core sources under Unity 6's exact constraints and runs 482 tests against
+them. That part is not a claim, it is an observation.
 
-## Why the code is split in two
+The **Unity layer has never been compiled or run.** There is no Unity
+installation in the environment this was built in, so the presentation layer was
+written and then cross-checked by hand against the core's actual API surface. No
+APK exists. Nothing visual has been seen.
 
-The project is deliberately divided into a **pure C# core** and a **thin Unity
-layer**. This is an architectural decision, not a stylistic one.
+`Documentation/Verification.md` states exactly what was run, what was not, and
+which defects the hand-check caught. Read it before trusting anything here.
 
-```
-Assets/Scripts/Core/   ->  game rules. No UnityEngine. Fully testable.
-Assets/Scripts/Game/   ->  MonoBehaviours. Translate input into core intent,
-                           and core output into transforms, VFX and audio.
-Assets/Scripts/Editor/ ->  tooling that generates scenes, materials and prefabs.
-```
-
-The boundary is **enforced by the compiler**, not by convention:
-
-- `Assets/Scripts/Core/Shadowbound.Core.asmdef` sets `"noEngineReferences": true`.
-  Unity will refuse to compile the core if any file touches `UnityEngine`.
-- `Tools/check-core-purity.sh` reproduces that rule for the command-line build,
-  so the same violation fails here too.
-- `Tests/Shadowbound.Core.Build` compiles the core sources against
-  `netstandard2.1` with `LangVersion 9.0` — Unity 6's exact API surface and
-  language level. C# 10+ syntax or a .NET-10-only API fails in the test harness
-  instead of failing later in the editor.
-
-The payoff: combat maths, AI decisions, loot rolls, progression curves and save
-serialisation are all verifiable without opening Unity. A "feature is done"
-claim can be backed by an actually executed test.
-
----
-
-## Requirements
-
-- **Unity 6** (6000.0 LTS or newer) with Android build support
-- **.NET SDK 8.0+** — only needed to run the core test suite
-- **Android SDK / NDK** — only needed to produce an APK
-
-The test suite needs no Unity installation. Unity needs no .NET SDK.
-
----
-
-## Running the core test suite
+### One command to check what can be checked
 
 ```bash
 bash Tools/test-core.sh
 ```
 
-This runs the purity gate, compiles the core under Unity-equivalent
-constraints, and executes the xUnit suite. Alternatively:
-
-```bash
-dotnet test Tests/Shadowbound.Core.Tests
 ```
-
-## Opening the project in Unity
-
-1. Open **Unity Hub** → *Add* → *Add project from disk* → select this folder.
-2. Open with **Unity 6**. The first import will resolve packages and may take
-   several minutes.
-3. Run the content bootstrap to generate materials, prefabs and scenes:
-   **`Shadowbound → Bootstrap → Generate All Content`**
-   (see `Assets/Scripts/Editor/ContentBootstrap.cs`).
-
-Hand-authored `.unity` and `.prefab` YAML files are intentionally **not**
-committed. They are fragile, unreviewable in diffs, and impossible to verify
-without the editor. Instead the editor tooling builds content deterministically
-from code, so scenes are reproducible and reviewable.
-
-## Building the Android APK
-
-1. In Unity: **File → Build Settings**, confirm the scene list is populated by
-   the bootstrap step, and switch platform to **Android**.
-2. Player settings are configured by the bootstrap for a mid-range Android
-   target (ARM64, IL2CPP, URP mobile quality tiers).
-3. **Build** to produce the APK.
+check-core-purity: OK (core is engine-free)
+Build succeeded.  0 Warning(s)  0 Error(s)
+Passed!  - Failed: 0, Passed: 482, Skipped: 0, Total: 482
+```
 
 ---
 
-## Roadmap
+## Getting it running
 
-1. **Core foundation** — maths, deterministic RNG, stats, damage, status
-   effects. *(in progress)*
-2. **Combat** — abilities, cooldowns, hit resolution, enemy AI.
-3. **RPG systems** — items, inventory, equipment, loot tables, progression.
-4. **Story structure** — quests, chapters, world region graph.
-5. **Persistence** — JSON serialisation, save slots, versioned migration.
-6. **Headless encounter simulation** — proves the full combat loop end to end.
-7. **Unity layer** — player controller, third-person camera, enemy agents, HUD.
-8. **Content bootstrap** — procedural materials, prefabs, arena, menu.
-9. **Android build + performance pass.**
+```bash
+# 1. Verify everything that can be verified without an engine.
+bash Tools/test-core.sh
+```
+
+```
+# 2. Open this folder in Unity 6 (6000.0 LTS+), then run the menu item:
+#      Shadowbound -> Set Up Project
+#    It creates the scene, registers it for the build, configures the Android
+#    player, and validates the content.
+#
+# 3. Press Play.      Keyboard + mouse in the Editor.
+#    Build the APK:    Shadowbound -> Build Android APK
+```
+
+Full instructions, controls and troubleshooting:
+[Documentation/Building.md](Documentation/Building.md).
+
+---
+
+## Why the code is split in two
+
+The project is divided into a **pure C# core** and a **thin Unity layer**. This
+is an architectural decision, not a stylistic one.
+
+```
+Assets/Scripts/Core/   ->  game rules. No UnityEngine. Fully testable.
+Assets/Scripts/Game/   ->  MonoBehaviours. Turn input into core intent,
+                           and core output into transforms, VFX and audio.
+Assets/Scripts/Editor/ ->  tooling: scene setup, Android config, validation.
+```
+
+The boundary is **enforced by the compiler**, in three independent places:
+
+- `Shadowbound.Core.asmdef` sets `"noEngineReferences": true`. Unity refuses to
+  compile the core if any file touches `UnityEngine`.
+- `Tools/check-core-purity.sh` reproduces that rule on the command line, so a
+  violation fails before Unity is opened.
+- `Tests/Shadowbound.Core.Build` compiles the core sources against
+  `netstandard2.1` with `LangVersion 9.0` — Unity 6's exact API surface and
+  language level. C# 10 syntax or a .NET-10-only API fails here instead of
+  failing later in the editor.
+
+The payoff: damage maths, AI decisions, loot rolls, progression curves and save
+compatibility are verifiable without launching Unity. "This feature is done" can
+be backed by a test that actually ran.
+
+Core never references the engine, and the engine is never the only authority over
+game state — the simulation owns every position, and the Unity layer only copies.
+See [Documentation/Architecture.md](Documentation/Architecture.md).
+
+---
+
+## Requirements
+
+- **Unity 6** (6000.0 LTS or newer) — to open, play and build
+- **Unity Android Build Support** (SDK, NDK, JDK) — to produce an APK
+- **.NET SDK 8.0+** — only to run the core test suite
+
+The test suite needs no Unity. Unity needs no .NET SDK.
 
 ---
 
@@ -120,24 +120,36 @@ from code, so scenes are reproducible and reviewable.
 
 ```
 Assets/
-  Scripts/Core/        pure C# game logic (no engine references)
-  Scripts/Game/        Unity adapters (MonoBehaviours)
-  Scripts/Editor/      content generation tooling
-  Settings/            URP assets (generated)
-  Scenes/              scenes (generated)
-Packages/              Unity package manifest
+  Scripts/Core/        pure C# game logic — no engine references
+  Scripts/Game/        Unity layer: input, camera, views, HUD, save storage
+  Scripts/Editor/      scene setup, Android configuration, content validation
+  Scenes/              generated by Shadowbound -> Set Up Project
+Packages/              Unity package manifest (URP, Input System, UGUI)
 ProjectSettings/       Unity project configuration
-Tools/                 command-line build and verification scripts
-Tests/                 .NET test projects for the core
-Documentation/         architecture and design notes
-Builds/                build output (git-ignored)
+Tools/                 command-line verification scripts
+Tests/                 .NET test projects compiling the real core sources
+Documentation/         architecture, design, building, verification status
+Builds/                APK output (git-ignored)
 ```
 
 ## Note on committed configuration
 
 Only `ProjectSettings/ProjectVersion.txt` is hand-authored. Everything else in
 `ProjectSettings/` is generated by Unity on first open, and the settings that
-actually matter (render pipeline, quality tiers, tags, layers, build scenes) are
-applied by the editor bootstrap. Editing Unity's generated YAML by hand is
-error-prone and effectively unverifiable, so the project treats code as the
-source of truth for configuration.
+actually matter are applied by the editor tooling.
+
+No `.unity` scenes, `.prefab` files or `.asset` materials are committed. They are
+fragile, unreviewable in a diff, and impossible to verify without the editor.
+Instead `GameBootstrap` assembles the whole game at runtime from primitives —
+session, arena, player, enemies, camera, HUD — so the scene on disk stays almost
+empty and nothing can drift out of sync with the code. Real art replaces the
+primitive shapes in `GameBootstrap.CreateView`; no game rule changes.
+
+## Documentation
+
+| Document | Contents |
+| --- | --- |
+| [Architecture.md](Documentation/Architecture.md) | Assembly boundaries, simulation model, determinism, save format |
+| [Design.md](Documentation/Design.md) | The original world, factions, creatures and abilities |
+| [Building.md](Documentation/Building.md) | Setup, controls, Android build, troubleshooting |
+| [Verification.md](Documentation/Verification.md) | **What has been executed and verified, and what has not** |

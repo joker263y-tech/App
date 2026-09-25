@@ -1,0 +1,159 @@
+# Building and running
+
+## Requirements
+
+| Task | Needs |
+| --- | --- |
+| Run the core test suite | .NET SDK 8.0 or newer |
+| Open the project, press Play | Unity 6 (6000.0 LTS or newer) |
+| Produce an APK | Unity 6 **with Android Build Support** (SDK, NDK, JDK) |
+
+The test suite needs no Unity. Unity needs no .NET SDK. They are independent.
+
+## 1. Run the tests (no Unity required)
+
+```bash
+bash Tools/test-core.sh
+```
+
+Runs the purity gate, compiles the core against `netstandard2.1` with C# 9 —
+Unity 6's exact constraints — and executes the xUnit suite.
+
+Expected output:
+
+```
+check-core-purity: OK (core is engine-free)
+Build succeeded.  0 Warning(s)  0 Error(s)
+Passed!  - Failed: 0, Passed: 482, Skipped: 0, Total: 482
+```
+
+Or directly:
+
+```bash
+dotnet test Tests/Shadowbound.Core.Tests
+```
+
+## 2. Open the project in Unity
+
+1. Unity Hub → **Add** → *Add project from disk* → select this folder.
+2. Open with **Unity 6**. The first import resolves packages and takes several
+   minutes. The Console should report **no compile errors**.
+3. Run **`Shadowbound → Set Up Project`**.
+
+That one menu item does three things:
+
+- Creates `Assets/Scenes/Arena.unity` containing a single `Game` object, and
+  registers it as the build scene.
+- Configures the Android player: landscape, IL2CPP, ARM64, Vulkan with an
+  OpenGL ES 3 fallback, linear colour space, minimum API 24.
+- Validates the authored content and logs a summary, flagging any loot entry,
+  creature or quest that points at something that does not exist.
+
+4. Press **Play**.
+
+There is no separate "generate assets" step. The game builds itself at runtime —
+arena geometry, materials, enemies, camera and HUD — so the scene file stays
+almost empty and nothing can drift out of sync with the code.
+
+### Other menu items
+
+| Menu item | Does |
+| --- | --- |
+| `Shadowbound → Set Up Project` | All three steps below, in order |
+| `Shadowbound → Create Playable Scene` | Recreates the scene and build settings |
+| `Shadowbound → Configure for Android` | Player settings only |
+| `Shadowbound → Validate Content` | Cross-checks all authored content |
+| `Shadowbound → Build Android APK` | Builds to `Builds/Shadowbound.apk` |
+| `Shadowbound → Log Save Location` | Prints the save directory to the Console |
+
+## 3. Controls
+
+### Keyboard and mouse (Editor, desktop)
+
+| Input | Action |
+| --- | --- |
+| `W` `A` `S` `D` / arrows | Move, relative to the camera |
+| Mouse drag (right button) | Look |
+| `Q` / `E` | Turn the camera |
+| Left mouse (hold) | Ember Edge |
+| `1` – `5` | Abilities 0–4 |
+| `Space` | Ashstep |
+
+Movement is camera-relative: forward moves the Warden away from the camera, not
+along a fixed world axis.
+
+### Touch (Android)
+
+| Control | Action |
+| --- | --- |
+| Left half of the screen | Movement stick, centred wherever your thumb lands |
+| Right half | Drag to look |
+| Bottom-right buttons | Abilities 1–5, each showing its cooldown as a radial sweep |
+
+The stick is anchored to the touch point rather than to a fixed spot on screen,
+because a fixed position is unusable for anyone holding the device differently.
+It has a small dead zone so a resting thumb does not drift the character.
+
+## 4. Build the APK
+
+With the Android module installed:
+
+**`Shadowbound → Build Android APK`**
+
+Output: `Builds/Shadowbound.apk`. On success the Console prints the path, size
+and build time. On failure it prints the reason — most commonly that the Android
+module (SDK, NDK, JDK) is missing for the installed Unity version, or that the
+keystore is not configured.
+
+To install and run on a connected device:
+
+```bash
+adb install -r Builds/Shadowbound.apk
+```
+
+### Android build configuration chosen
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| Scripting backend | IL2CPP | Mono is too slow for this workload on device |
+| Architecture | ARM64 only | Required for Play Store submission; halves build size |
+| Graphics API | Vulkan, then OpenGL ES 3 | Vulkan is faster on the target hardware, GLES3 is the fallback if a driver misbehaves |
+| Colour space | Linear | The game is dark; banding in shadows is the first visible artefact |
+| Orientation | Landscape, both ways | A third-person action game is unplayable in portrait |
+| Minimum API | 24 (Android 7.0) | Covers the target device range without legacy branches |
+
+## Saves
+
+Written to `Application.persistentDataPath/saves/<slot>.shadowbound.json` —
+`Shadowbound → Log Save Location` prints the exact directory.
+
+Writes go to a temporary file and are then moved into place, so an interrupted
+write cannot leave a truncated file where a complete save used to be. Migration
+runs on **load**, not on save, so an old file stays on disk in its original form
+until the player actually loads and re-saves it.
+
+The current build auto-saves every 60 seconds to slot `slot-1`.
+`GameBootstrap.LoadSaveOnStart` controls whether a launch resumes from it.
+
+## Troubleshooting
+
+**Everything is magenta.** The render pipeline asset is missing. URP is in
+`Packages/manifest.json`; if `Assets/Settings/` has no pipeline asset, create one
+via *Assets → Create → Rendering → URP Asset* and assign it in
+*Project Settings → Graphics*.
+
+**Labels are invisible in the HUD.** Unity renamed its built-in font in 2022.2.
+`HudController.ResolveFont` tries both names; if neither resolves, the bars and
+buttons still work and only the text is missing.
+
+**The camera goes through walls.** `ThirdPersonCamera.ObstructionMask` is empty
+by default, which disables collision. Assign a layer to the arena geometry and
+set the mask to enable it.
+
+**Input does nothing.** `PlayerInputDriver.DeviceInputEnabled` is set from
+`Application.isMobilePlatform`. On a device it is false and the on-screen
+controls drive; in the Editor it is true and the keyboard does. If you are
+testing touch in the Editor, set it false on the `Game` object.
+
+**The APK refuses to install.** The device needs Android 7.0 or newer and an
+ARM64 CPU.

@@ -66,6 +66,40 @@ namespace Shadowbound.Core.Randomness
             return rng;
         }
 
+        /// <summary>
+        /// A hash that produces the same value on every process, platform and run.
+        ///
+        /// Each enemy derives its own generator stream from its id so that changing
+        /// one creature's behaviour cannot shift another's. That only holds if the
+        /// hash is stable: string.GetHashCode is deliberately randomised per process
+        /// in modern .NET, so using it here would mean the same seed produced
+        /// different enemy behaviour on every launch, quietly breaking the
+        /// determinism the whole simulation is built on.
+        ///
+        /// This is FNV-1a, chosen because it is tiny, has no dependencies, and is
+        /// specified down to the byte - so it is reproducible anywhere.
+        /// </summary>
+        public static ulong StableHash(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return 0UL;
+            }
+
+            const ulong OffsetBasis = 14695981039346656037UL;
+            const ulong Prime = 1099511628211UL;
+
+            ulong hash = OffsetBasis;
+
+            for (int i = 0; i < text.Length; i++)
+            {
+                hash ^= text[i];
+                hash = unchecked(hash * Prime);
+            }
+
+            return hash;
+        }
+
         /// <summary>Advances the sequence and returns 32 random bits.</summary>
         public uint NextUInt()
         {
