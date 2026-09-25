@@ -1,20 +1,151 @@
-name: Unity Personal Activation
+# =============================================================================
+# SHADOWBOUND: THE LAST NIGHT - one-time Unity Personal activation helper
+# =============================================================================
+#
+# This workflow is NOT part of the normal CI pipeline (verify / license-check /
+# android in ci.yml). It exists purely to solve the "no PC, no Unity Hub GUI"
+# problem for obtaining the first UNITY_LICENSE secret.
+#
+# What it does:
+#   1. Reads the exact Unity Editor version from ProjectSettings/ProjectVersion.txt
+#   2. Resolves a matching unityci/editor Docker image tag automatically
+#   3. Runs that Unity Editor headlessly with -createManualActivationFile,
+#      which produces a small *.alf request file (no license needed for this
+#      step - it only REQUESTS one)
+#   4. Uploads that *.alf file as a workflow artifact
+#
+# What YOU do after this workflow finishes (from your phone, no PC needed):
+#   1. Actions tab -> this run -> download the "unity-activation-file" artifact
+#   2. Open https://license.unity3d.com/manual in your phone's browser
+#   3. Log in with the nadermagdy991 Unity account, upload the .alf file,
+#      choose "Unity Personal", answer the questions, download the .ulf file
+#      it gives you back
+#   4. From Termux:
+#        gh secret set UNITY_LICENSE  < Unity_v6000.0.32f1.ulf
+#        gh secret set UNITY_EMAIL    --body "your-unity-account@email.com"
+#        gh secret set UNITY_PASSWORD --body "your-unity-account-password"
+#   5. Re-run (or just push to main) - ci.yml's "android" job will now find
+#      the secrets and build the real APK via game-ci/unity-builder@v4.
+#
+# This workflow is safe to delete once UNITY_LICENSE is set - it is a
+# bootstrap step, not something that needs to run again unless the Unity
+# account is de-authorized and needs re-activating.
+#
+# NOTE: this uses the same activation mechanism Unity Hub itself uses
+# (-createManualActivationFile / https://license.unity3d.com/manual). It is
+# not an official GameCI Action (the old one, unity-request-activation-file,
+# was deprecated), but it is the same flow GameCI's own docs still point to
+# as the manual fallback: https://game.ci/docs/github/activation
+# =============================================================================
+
+name: Generate Unity Activation File
 
 on:
   workflow_dispatch:
 
 jobs:
-  activation:
-    name: Generate Unity activation file
+  generate-alf:
+    name: Create manual activation request (.alf)
     runs-on: ubuntu-latest
 
     steps:
-      - name: Generate activation file
-        id: activation
-        uses: game-ci/unity-request-activation-file@v2
+      - uses: actions/checkout@v4
 
-      - name: Upload activation file
+      - name: Read the Unity Editor version this project uses
+        id: unity_version
+        run: |
+          VERSION=$(grep 'm_EditorVersion:' ProjectSettings/ProjectVersion.txt | awk '{print $2}')
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not read m_EditorVersion from ProjectSettings/ProjectVersion.txt"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Project Unity version: $VERSION"
+
+      - name: Resolve a matching unityci/editor image tag
+        id: tag
+        run: |
+          VERSION="${{ steps.unity_version.outputs.version }}"
+
+          # unityci/editor tags look like: <version>-base-<n> or
+          # ubuntu-<version>-base-<n> depending on age. Ask Docker Hub for
+          # anything containing our version + "base" and take the newest.
+          TAG=$(curl -fsSL "https://hub.docker.com/v2/repositories/unityci/editor/tags?page_size=100&name=${VERSION}" \
+            | jq -r '.results[].name' \
+            | grep -F "$VERSION" \
+            | grep -i 'base' \
+            | sort -V \
+            | tail -n1)
+
+          if [ -z "$TAG" ]; then
+            echo "::error::No unityci/editor image found for Unity $VERSION."
+            echo "::error::Check https://hub.docker.com/r/unityci/editor/tags manually,"
+            echo "::error::find the closest matching tag, and set it directly in this step."
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Resolved image: unityci/editor:$TAG"
+
+      - name: Run Unity headlessly to request an activation file
+        id: run_unity
+        run: |
+          IMAGE="unityci/editor:${{ steps.tag.outputs.tag }}"
+          docker pull "$IMAGE"
+
+          CID=$(docker create \
+            -v "$GITHUB_WORKSPACE:/project" \
+            -w /project \
+            "$IMAGE" \
+            unity-editor -batchmode -nographics -logFile - \
+              -createManualActivationFile -quit)
+
+          echo "container=$CID" >> "$GITHUB_OUTPUT"
+
+          # This exits non-zero by design once the .alf request is written -
+          # Unity treats "no license yet" as an error condition. That's fine.
+          docker start -a "$CID" || true
+
+      - name: Collect the generated .alf file
+        run: |
+          CID="${{ steps.run_unity.outputs.container }}"
+          mkdir -p ./activation-output
+
+          # We don't know in advance exactly where inside the container Unity
+          # wrote the file, so find every file the container added or changed
+          # and pull out anything that looks like an activation file.
+          docker diff "$CID" \
+            | awk '$1 == "A" || $1 == "C" {print $2}' \
+            | grep -i '\.alf$' > ./alf_paths.txt || true
+
+          if [ ! -s ./alf_paths.txt ]; then
+            echo "::error::No .alf file was produced. Check the previous step's log output."
+            docker rm "$CID" >/dev/null 2>&1 || true
+            exit 1
+          fi
+
+          while read -r p; do
+            docker cp "$CID:$p" "./activation-output/$(basename "$p")"
+          done < ./alf_paths.txt
+
+          docker rm "$CID" >/dev/null 2>&1 || true
+          ls -la ./activation-output
+
+      - name: Upload the activation file
         uses: actions/upload-artifact@v4
         with:
-          name: Unity-Activation
-          path: ${{ steps.activation.outputs.filePath }}
+          name: unity-activation-file
+          path: activation-output/*.alf
+          if-no-files-found: error
+
+      - name: Next steps
+        run: |
+          echo "## Next steps" >> "$GITHUB_STEP_SUMMARY"
+          echo "1. Download the **unity-activation-file** artifact above." >> "$GITHUB_STEP_SUMMARY"
+          echo "2. From your phone browser, open https://license.unity3d.com/manual" >> "$GITHUB_STEP_SUMMARY"
+          echo "3. Log in, upload the .alf file, choose **Unity Personal**, download the .ulf it gives back." >> "$GITHUB_STEP_SUMMARY"
+          echo "4. From Termux:" >> "$GITHUB_STEP_SUMMARY"
+          echo '   \`gh secret set UNITY_LICENSE < Unity_v${{ steps.unity_version.outputs.version }}.ulf\`' >> "$GITHUB_STEP_SUMMARY"
+          echo '   \`gh secret set UNITY_EMAIL --body "your-unity-account-email"\`' >> "$GITHUB_STEP_SUMMARY"
+          echo '   \`gh secret set UNITY_PASSWORD --body "your-unity-account-password"\`' >> "$GITHUB_STEP_SUMMARY"
+          echo "5. Push to main or run ci.yml manually - the **android** job will now build the APK." >> "$GITHUB_STEP_SUMMARY"
