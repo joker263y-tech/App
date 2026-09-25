@@ -38,6 +38,13 @@ namespace Shadowbound.Core.Progression
 
         private int _totalExperience;
 
+        /// <summary>
+        /// Levels of growth already baked into the owner's base stats, as
+        /// (level - 1). Tracking this makes growth application idempotent, so
+        /// loading a save and then levelling up cannot count the same level twice.
+        /// </summary>
+        private int _growthAppliedLevels;
+
         public ProgressionSystem(Combatant owner, ExperienceCurve curve, StatGrowth[] growth)
         {
             _owner = owner ?? throw new ArgumentNullException(nameof(owner));
@@ -125,7 +132,7 @@ namespace Shadowbound.Core.Progression
             while (Level < targetLevel)
             {
                 Level++;
-                ApplyLevelGrowth();
+                ApplyGrowthUpTo(Level, healIncrease: true);
                 UnspentAttributePoints++;
                 gained++;
 
@@ -172,21 +179,34 @@ namespace Shadowbound.Core.Progression
             _totalExperience = totalExperience < 0 ? 0 : totalExperience;
             Level = _curve.LevelForExperience(_totalExperience);
 
-            for (int i = 0; i < _growth.Length; i++)
-            {
-                StatGrowth growth = _growth[i];
-                if (growth.PerLevel > 0f && Level > 1)
-                {
-                    _owner.Stats.AddToBase(growth.Stat, growth.PerLevel * (Level - 1));
-                }
-            }
+            // No healing here: the caller is expected to reset vitals to full
+            // after loading, so granting the delta would be wasted work at best.
+            ApplyGrowthUpTo(Level, healIncrease: false);
 
             UnspentAttributePoints = unspentPoints < 0 ? 0 : unspentPoints;
             _owner.Level = Level;
         }
 
-        private void ApplyLevelGrowth()
+        /// <summary>
+        /// Applies whatever stat growth is missing to bring the owner up to
+        /// <paramref name="targetLevel"/>.
+        ///
+        /// Written as "apply the difference" rather than "apply one level" so it
+        /// is idempotent. Levelling normally, loading a save, and levelling again
+        /// all funnel through here, and none of them can double-count a level.
+        /// </summary>
+        private void ApplyGrowthUpTo(int targetLevel, bool healIncrease)
         {
+            int target = targetLevel - 1;
+            int missingLevels = target - _growthAppliedLevels;
+
+            if (missingLevels <= 0)
+            {
+                return;
+            }
+
+            _growthAppliedLevels = target;
+
             if (_growth.Length == 0)
             {
                 return;
@@ -199,8 +219,13 @@ namespace Shadowbound.Core.Progression
                 StatGrowth growth = _growth[i];
                 if (growth.PerLevel > 0f)
                 {
-                    _owner.Stats.AddToBase(growth.Stat, growth.PerLevel);
+                    _owner.Stats.AddToBase(growth.Stat, growth.PerLevel * missingLevels);
                 }
+            }
+
+            if (!healIncrease)
+            {
+                return;
             }
 
             float healthGained = _owner.Vitals.MaxHealth - healthBefore;

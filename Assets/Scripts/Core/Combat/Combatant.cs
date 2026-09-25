@@ -29,6 +29,7 @@ namespace Shadowbound.Core.Combat
     public sealed class Combatant
     {
         private Float3 _position;
+        private DamageResult? _pendingResult;
         private float _facingDegrees;
         private float _knockbackSpeed;
         private Float3 _knockbackDirection;
@@ -49,6 +50,13 @@ namespace Shadowbound.Core.Combat
             Resistances = new ResistanceSet();
             Vitals = new Vitals(Stats, Resistances);
             Statuses = new StatusEffectSystem(Stats, Vitals);
+
+            // Health can be removed through more than one path: a resolved attack
+            // via ReceiveDamage, or a damage-over-time tick inside the status
+            // system reaching straight for the vitals pool. Observing the pool
+            // itself means every one of those paths raises Damaged, so burning to
+            // death alerts allies exactly like being struck does.
+            Vitals.Damaged += OnVitalsDamaged;
 
             _position = Float3.Zero;
             _facingDegrees = 0f;
@@ -75,10 +83,35 @@ namespace Shadowbound.Core.Combat
         /// <summary>Set on the player and on enemies that can be permanently killed.</summary>
         public bool IsPersistent { get; set; }
 
+        /// <summary>
+        /// Archetype identifier, such as "hollow-walker". Used as the target id in
+        /// quest kill objectives and in encounter bookkeeping, so two instances of
+        /// the same creature can share an archetype while keeping distinct ids.
+        /// </summary>
+        public string ArchetypeId { get; set; } = "";
+
+        /// <summary>Experience granted to whoever defeats this combatant.</summary>
+        public int ExperienceReward { get; set; }
+
+        /// <summary>Loot table rolled on defeat. Empty means nothing drops.</summary>
+        public string LootTableId { get; set; } = "";
+
+        /// <summary>
+        /// Bosses additionally satisfy DefeatBoss objectives, so a chapter can
+        /// require a specific named encounter rather than a tally of kills.
+        /// </summary>
+        public bool IsBoss { get; set; }
+
         /// <summary>Fired once, the first time this combatant's health reaches zero.</summary>
         public event Action<Combatant> Died;
 
-        public event Action<Combatant, DamageResult> Damaged;
+        /// <summary>
+        /// Raised with the victim, the attacker and the resolved hit. The attacker
+        /// is included because kill credit, aggro propagation and loot all need to
+        /// know who dealt the blow, and the attacker cannot be recovered after the
+        /// fact from the result alone. Null for environmental damage.
+        /// </summary>
+        public event Action<Combatant, Combatant, DamageResult> Damaged;
 
         public Float3 Position
         {
@@ -192,13 +225,18 @@ namespace Shadowbound.Core.Combat
                 return 0f;
             }
 
+            // The full result is carried through to the health pool, so the
+            // Damaged event can report armour and crit detail rather than just a
+            // number. The pool raises the event, which is what makes every damage
+            // path - attack or damage over time - report identically.
+            _pendingResult = result;
             float applied = Vitals.ApplyDamage(result.Applied, source);
+            _pendingResult = null;
+
             if (applied <= 0f)
             {
                 return 0f;
             }
-
-            Damaged?.Invoke(this, result);
 
             if (!Vitals.IsAlive)
             {
@@ -234,6 +272,21 @@ namespace Shadowbound.Core.Combat
             {
                 AnnounceDeath();
             }
+        }
+
+        /// <summary>
+        /// Raised for every damage path, whether it arrived through
+        /// <see cref="ReceiveDamage"/> or bypassed it. Reports the full result when
+        /// one is known, and a synthesised equivalent for damage that reached the
+        /// health pool directly, such as a damage-over-time tick.
+        /// </summary>
+        private void OnVitalsDamaged(float amount, object source)
+        {
+            DamageResult result = _pendingResult
+                ?? new DamageResult(amount, amount, amount, false, 0f);
+
+            _pendingResult = null;
+            Damaged?.Invoke(this, source as Combatant, result);
         }
 
         /// <summary>How quickly knockback bleeds off, in units per second squared.</summary>
