@@ -36,6 +36,16 @@ namespace Shadowbound.Core.Stats
             _multiplierProduct = new float[StatIds.Count];
             _modifiers = new List<StatModifier>(16);
             _dirty = true;
+
+            // Stats that act as rates or multipliers must not default to zero,
+            // because zero is a degenerate value rather than a neutral one:
+            // a CooldownRate of 0 freezes every cooldown in the game forever,
+            // and a CritMultiplier of 0 makes a critical hit deal no damage.
+            // Content authors set these explicitly when they want a different
+            // value, so seeding a sensible identity here removes a silent
+            // footgun without taking anything away.
+            _base[(int)StatId.CooldownRate] = 1f;
+            _base[(int)StatId.CritMultiplier] = 1.5f;
         }
 
         public StatSet(StatId id, float value)
