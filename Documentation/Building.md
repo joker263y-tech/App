@@ -87,6 +87,7 @@ almost empty and nothing can drift out of sync with the code.
 | Left mouse (hold) | Ember Edge |
 | `1` – `5` | Abilities 0–4 |
 | `Space` | Ashstep |
+| `Esc` / `Tab` | Open and close the game menu |
 
 Movement is camera-relative: forward moves the Warden away from the camera, not
 along a fixed world axis.
@@ -98,6 +99,7 @@ along a fixed world axis.
 | Left half of the screen | Movement stick, centred wherever your thumb lands |
 | Right half | Drag to look |
 | Bottom-right buttons | Abilities 1–5, each showing its cooldown as a radial sweep |
+| Top-right button | Open the game menu |
 
 The stick is anchored to the touch point rather than to a fixed spot on screen,
 because a fixed position is unusable for anyone holding the device differently.
@@ -130,6 +132,23 @@ adb install -r Builds/Shadowbound.apk
 | Colour space | Linear | The game is dark; banding in shadows is the first visible artefact |
 | Orientation | Landscape, both ways | A third-person action game is unplayable in portrait |
 | Minimum API | 24 (Android 7.0) | Covers the target device range without legacy branches |
+
+## The in-game menu
+
+Opened with `Esc` / `Tab`, or the button in the top-right corner of the screen.
+The world freezes while it is open, so nothing swings at you while you read it.
+
+| Section | What it does |
+| --- | --- |
+| **Resume** | Closes the menu and unfreezes the world. Always the first row. |
+| **Equipped** | Shows each slot and what is in it. Tapping one takes the item off and returns it to the bag. |
+| **Carried** | Lists equippable items in the bag with their stat bonuses, so the choice is not blind. Tapping wears one. |
+| **Saves** | Lists save slots with the profile, level and playtime. Tapping loads; the trailing `[delete]` wording on a slot marks it as loadable. The last row saves to the current slot. |
+
+Swapping equipment is a single transaction: the incoming item leaves the bag and
+whatever it replaced goes back in, so nothing is lost even when the bag is full.
+Taking an item off when the bag is full leaves it equipped and says so, rather
+than destroying it.
 
 ## Saves
 

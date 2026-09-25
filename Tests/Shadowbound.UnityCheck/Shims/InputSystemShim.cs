@@ -105,6 +105,10 @@ namespace UnityEngine.InputSystem
 
         public KeyControl spaceKey { get { return null; } }
 
+        public KeyControl escapeKey { get { return null; } }
+
+        public KeyControl tabKey { get { return null; } }
+
         public KeyControl leftArrowKey { get { return null; } }
 
         public KeyControl rightArrowKey { get { return null; } }

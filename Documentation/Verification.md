@@ -10,8 +10,8 @@ claim as "the game works", and the difference matters.
 | --- | --- | --- |
 | Core purity gate | `bash Tools/check-core-purity.sh` | Pass — core is engine-free |
 | Core compiles under Unity's constraints | `bash Tools/test-core.sh` | Pass — netstandard2.1, C# 9, 0 warnings |
-| Core test suite | `bash Tools/test-core.sh` | **511 passed, 0 failed** |
-| Every C# file parses at C# 9 | `bash Tools/check-syntax.sh` | Pass — 46 files, no syntax errors |
+| Core test suite | `bash Tools/test-core.sh` | **536 passed, 0 failed** |
+| Every C# file parses at C# 9 | `bash Tools/check-syntax.sh` | Pass — 47 files, no syntax errors |
 | **Unity layer type-checks against real Unity assemblies** | `bash Tools/check-unity-layer.sh` | Pass — **0 errors, 0 warnings** |
 
 All three commands run without a Unity installation.
@@ -56,7 +56,61 @@ first time found two genuine compile errors that a hand review had missed:
    `DirectoryPath`.
 
 By the time it reported clean, every Unity API and every core API the Game layer
-calls had been confirmed to exist with the signature used.
+calls had been confirmed to exist with the signature used. It has since caught
+two more: `ModifierOp` has no member called `Percent` or `Multiply` (they are
+`PercentAdditive` and `PercentMultiplicative`), which a menu label would have
+tripped over.
+
+## The runtime-path audit
+
+"Compiles and is tested" is not "is reachable while playing". Auditing the project
+against that standard found three features that were fully implemented, fully
+tested, and **impossible to reach in a running game**. None of them failed a test,
+because every test exercised them directly rather than through the path a player
+takes.
+
+### 1. Quest rewards were never granted, and the story could not advance
+
+A quest only becomes startable once its prerequisite has been **turned in**.
+Turning in is a separate step from completing, and nothing in the project ever
+performed it. So:
+
+- The second quest onward was permanently `Locked`, and its reward was never
+  granted. The authored story was unreachable past the opening scene.
+- Every individual quest test still passed, because each examined one quest in
+  isolation and a single quest does not need a turn-in to be tested.
+
+Fixed in `GameSession.AdvanceQuests`, with `QuestAdvancementTests` driving the
+chain end to end: finish a quest, get paid, watch the next one appear. The old
+behaviour is asserted too, as `WithoutAutoAdvance_TheStoryStallsAfterTheOpeningQuest`,
+so it cannot come back silently.
+
+This change also altered eight existing tests, all of which had encoded the
+broken flow. Each was confirmed to be a stale expectation rather than a
+regression, and they now disable automatic advancement so they keep testing the
+plumbing they are about.
+
+### 2. Nothing could ever be equipped
+
+`EquipmentLoadout` was complete and tested, wired into saving, and called by
+nothing at runtime. The Warden's Blade handed over by the second quest went into
+the bag and stayed there. `GameSession.TryEquipFromInventory` closes it, and the
+menu gives the player a way to ask.
+
+The swap is deliberately one transaction in the core rather than an equip
+followed by a stow in the UI, because the two-step version destroys the replaced
+item whenever the bag is full - which is exactly when a player finds an upgrade.
+`EquippingIntoAFullBag_StillKeepsTheReplacedItem` pins that down.
+
+### 3. The save and equipment screens were unreachable on a phone
+
+The menu opened with `Esc` or `Tab`. Android has no keyboard. The menu, the save
+slots and the equipment screen would all have been present and invisible in the
+build this project targets. Fixed with an on-screen button, plus a `RESUME` row
+that is always first - a menu you can open but not close is worse than no menu.
+
+This one was caught while writing the code rather than by the audit, which is the
+argument for asking the question of every change rather than once.
 
 ### Content validation moved into the tested core
 

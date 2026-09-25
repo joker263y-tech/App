@@ -83,6 +83,8 @@ namespace Shadowbound.Game
 
         public HudController Hud { get; private set; }
 
+        public GameMenu Menu { get; private set; }
+
         public SaveSlotManager SaveManager { get; private set; }
 
         /// <summary>Every spawned view, so the frame loop can sync them without allocating.</summary>
@@ -116,6 +118,18 @@ namespace Shadowbound.Game
             BuildPlayer();
             BuildEnemies();
             AttachHud();
+
+            // Built after the HUD: the menu needs it in order to switch the
+            // on-screen controls off while it is open.
+            Menu = GameMenu.Create(transform, this, Hud);
+
+            if (Hud != null && Menu != null)
+            {
+                // The on-screen menu button. A phone has no Escape key, so without
+                // this the save and equipment screens would be unreachable in the
+                // build this project actually targets.
+                Hud.MenuRequested += Menu.Toggle;
+            }
 
             if (LoadSaveOnStart)
             {
@@ -476,29 +490,36 @@ namespace Shadowbound.Game
 
             float deltaTime = Time.deltaTime;
 
-            // Input is gathered in one place, before the simulation runs, so every
-            // fixed step in this frame sees a consistent set of intent. The HUD goes
-            // first: on-screen controls write into the driver, and the driver is then
-            // polled once, covering touch and keyboard alike.
-            if (Hud != null)
+            // While the menu is open the world is frozen and takes no input. The menu
+            // runs its own Update, so it keeps responding; everything else stands
+            // still, which is what stops a load from racing an enemy mid-swing.
+            bool paused = Menu != null && Menu.IsOpen;
+
+            if (!paused)
             {
-                Hud.PollInput();
+                // Input is gathered in one place, before the simulation runs, so every
+                // fixed step in this frame sees a consistent set of intent. The HUD
+                // goes first: on-screen controls write into the driver, and the driver
+                // is then polled once, covering touch and keyboard alike.
+                if (Hud != null)
+                {
+                    Hud.PollInput();
+                }
+
+                InputDriver.CameraTransform = CameraRig != null ? CameraRig.transform : null;
+                InputDriver.Poll();
+
+                Session.Update(deltaTime);
+
+                SyncViews(deltaTime);
+                ExpireDeadViews(deltaTime);
+                TickAutoSave(deltaTime);
             }
-
-            InputDriver.CameraTransform = CameraRig != null ? CameraRig.transform : null;
-            InputDriver.Poll();
-
-            Session.Update(deltaTime);
-
-            SyncViews(deltaTime);
-            ExpireDeadViews(deltaTime);
 
             if (Hud != null)
             {
                 Hud.Refresh();
             }
-
-            TickAutoSave(deltaTime);
         }
 
         private void SyncViews(float deltaTime)

@@ -16,10 +16,11 @@ combat, semi-open world, story-driven PvE.
 | Area | State |
 | --- | --- |
 | Repository + Unity 6 project scaffolding | Done |
-| Pure-C# game-logic core (combat, AI, items, quests, world, saves) | **Done — 511 tests passing** |
+| Pure-C# game-logic core (combat, AI, items, quests, world, saves) | **Done — 536 tests passing** |
 | Headless encounter + session integration | Done, tested |
 | Authored content (creatures, items, quests, chapters, regions) | Done — validated by a tested validator |
-| Unity layer (input, camera, views, HUD, saves) | **Type-checks against real Unity assemblies** — never executed |
+| Unity layer (input, camera, views, HUD, menu, saves) | **Type-checks against real Unity assemblies** — never executed |
+| In-game menu (equipment, save/load, resume) | Written — never executed |
 | Editor tooling (scene setup, Android config) | Written — **not compiled** (no UnityEditor reference assembly) |
 | Android APK | **Not produced** — requires Unity with the Android module |
 
@@ -31,9 +32,16 @@ them. That part is not a claim, it is an observation.
 
 The **Game assembly is verified to compile**, against real Unity reference
 assemblies, with 0 errors and 0 warnings. Type-checking it for the first time
-immediately found two genuine compile errors a hand review had missed — a member
+immediately found genuine compile errors a hand review had missed — a member
 declared as both a field and a method, and a property shadowing
 `System.IO.Directory`.
+
+An audit against the standard "is the runtime path actually connected?" found
+three things that were fully built, fully tested, and **completely unreachable
+while playing**: quest rewards were never granted (so the story could not advance
+past its first quest), no item could ever be equipped, and the menu was
+keyboard-only on a platform with no keyboard. All three are fixed; the audit is
+written up in `Documentation/Verification.md`.
 
 **Nothing has been executed, seen, or installed.** There is no Unity in the
 environment this was built in. No APK exists. Nothing visual has been rendered,
@@ -45,14 +53,14 @@ lists the defects each check caught. Read it before trusting anything here.
 ### Three commands to check what can be checked
 
 ```bash
-bash Tools/test-core.sh         # purity gate + 511 tests
+bash Tools/test-core.sh         # purity gate + 536 tests
 bash Tools/check-syntax.sh      # every C# file parses at C# 9
 bash Tools/check-unity-layer.sh # Game assembly type-checks against Unity
 ```
 
 ```
 check-core-purity: OK (core is engine-free)
-Passed!  - Failed: 0, Passed: 511, Skipped: 0, Total: 511
+Passed!  - Failed: 0, Passed: 536, Skipped: 0, Total: 536
 check-syntax: OK (46 files parse as C# 9, no syntax errors)
 Build succeeded.  0 Warning(s)  0 Error(s)
 ```

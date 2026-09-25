@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Shadowbound.Core.Combat;
 using Shadowbound.Core.Progression;
@@ -64,6 +65,16 @@ namespace Shadowbound.Game.Ui
         private RectTransform _canvasRect;
         private RectTransform _stickBackground;
         private RectTransform _stickHandle;
+        private RectTransform _menuButton;
+
+        /// <summary>
+        /// Raised when the on-screen menu button is tapped.
+        ///
+        /// The HUD does not know the menu exists; the bootstrap connects the two. That
+        /// keeps the two screens independent, and means a build without a menu simply
+        /// never raises this.
+        /// </summary>
+        public event Action MenuRequested;
 
         private readonly List<RectTransform> _abilityButtons = new List<RectTransform>(AbilityButtonCount);
         private readonly List<Image> _abilityCooldownFills = new List<Image>(AbilityButtonCount);
@@ -102,6 +113,7 @@ namespace Shadowbound.Game.Ui
             BuildBars();
             BuildStick();
             BuildAbilityButtons();
+            BuildMenuButton();
             BuildLabels();
 
             WireSessionEvents();
@@ -294,6 +306,31 @@ namespace Shadowbound.Game.Ui
 
         private readonly List<int> _buttonIndexes = new List<int>(AbilityButtonCount);
 
+        /// <summary>
+        /// The menu button, top right.
+        ///
+        /// This is not decoration. The menu is otherwise opened with Escape or Tab,
+        /// and an Android phone has neither - so without a touch target the save and
+        /// equipment screens would be unreachable on the only platform this targets.
+        /// </summary>
+        private void BuildMenuButton()
+        {
+            Image button = CreateImage(transform, "Menu Button", new Color(1f, 1f, 1f, 0.14f));
+
+            _menuButton = button.rectTransform;
+
+            Anchor(
+                _menuButton,
+                new Vector2(1f, 1f),
+                new Vector2(-40f, -40f),
+                new Vector2(120f, 120f),
+                new Vector2(0.5f, 0.5f));
+
+            // Three bars, drawn as glyphs rather than art so there is no sprite to ship.
+            Text label = CreateLabel(_menuButton, "Glyph", 52, TextAnchor.MiddleCenter);
+            label.text = "=\\n=";
+        }
+
         private void BuildLabels()
         {
             _statusLabel = CreateLabel(transform, "Status", 30, TextAnchor.UpperLeft);
@@ -383,6 +420,15 @@ namespace Shadowbound.Game.Ui
         // --------------------------------- update ---------------------------------
 
         /// <summary>
+        /// Whether the on-screen controls respond to touches.
+        ///
+        /// Turned off while a menu is open. Without this a tap on a menu row would
+        /// also swing the camera or move the Warden, because both are reading the same
+        /// pointers from the same screen.
+        /// </summary>
+        public bool InputEnabled { get; set; } = true;
+
+        /// <summary>
         /// Reads pointers and feeds the driver. Called by the bootstrap before the
         /// session is stepped, so on-screen input and the simulation it drives stay
         /// in the same order every frame.
@@ -391,6 +437,20 @@ namespace Shadowbound.Game.Ui
         {
             if (_driver == null)
             {
+                return;
+            }
+
+            if (!InputEnabled)
+            {
+                // Release anything already held, so the Warden does not keep walking
+                // in the direction the thumb was pointing when the menu opened.
+                if (_pointers.Count > 0)
+                {
+                    _pointers.Clear();
+                    _driver.SetMoveAxis(Vector2.zero);
+                    _stickHandle.anchoredPosition = Vector2.zero;
+                }
+
                 return;
             }
 
@@ -491,8 +551,18 @@ namespace Shadowbound.Game.Ui
                 Current = position
             };
 
-            // Buttons take priority: they sit on top of the look area, and a press
-            // that lands on one must not also swing the camera.
+            // The menu button is checked first: it sits over the look area, and a press
+            // that lands on it must not also swing the camera.
+            if (_menuButton != null &&
+                RectTransformUtility.RectangleContainsScreenPoint(_menuButton, position, null))
+            {
+                _pointers[id] = state;
+                MenuRequested?.Invoke();
+                return;
+            }
+
+            // Buttons take priority over the movement and look regions, for the same
+            // reason.
             for (int i = 0; i < _abilityButtons.Count; i++)
             {
                 if (!RectTransformUtility.RectangleContainsScreenPoint(_abilityButtons[i], position, null))
