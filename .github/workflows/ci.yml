@@ -262,27 +262,20 @@ jobs:
 
       - name: Collect the generated .alf file
         run: |
-          CID="${{ steps.run_unity.outputs.container }}"
           mkdir -p ./activation-output
 
-          # We don't know in advance exactly where inside the container Unity
-          # wrote the file, so find every file the container added or changed
-          # and pull out anything that looks like an activation file.
-          docker diff "$CID" \
-            | awk '$1 == "A" || $1 == "C" {print $2}' \
-            | grep -i '\.alf$' > ./alf_paths.txt || true
+          # Unity wrote the file into /project, which is a bind mount of
+          # $GITHUB_WORKSPACE - so it's already sitting on the runner's disk,
+          # not inside the container's own writable layer. Just find it here.
+          find "$GITHUB_WORKSPACE" -maxdepth 2 -iname "*.alf" -exec cp {} ./activation-output/ \;
 
-          if [ ! -s ./alf_paths.txt ]; then
+          docker rm "${{ steps.run_unity.outputs.container }}" >/dev/null 2>&1 || true
+
+          if [ -z "$(ls -A ./activation-output 2>/dev/null)" ]; then
             echo "::error::No .alf file was produced. Check the previous step's log output."
-            docker rm "$CID" >/dev/null 2>&1 || true
             exit 1
           fi
 
-          while read -r p; do
-            docker cp "$CID:$p" "./activation-output/$(basename "$p")"
-          done < ./alf_paths.txt
-
-          docker rm "$CID" >/dev/null 2>&1 || true
           ls -la ./activation-output
 
       - name: Upload the activation file
