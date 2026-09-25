@@ -1,0 +1,19 @@
+{
+    "name": "Shadowbound.Editor",
+    "rootNamespace": "Shadowbound.EditorTools",
+    "references": [
+        "Shadowbound.Core",
+        "Shadowbound.Game"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
