@@ -189,8 +189,80 @@ namespace Shadowbound.Editor
             string outputDirectory = Path.Combine(Directory.GetCurrentDirectory(), "Builds");
             Directory.CreateDirectory(outputDirectory);
 
-            string outputPath = Path.Combine(outputDirectory, "Shadowbound.apk");
+            try
+            {
+                BuildAndroidApkTo(Path.Combine(outputDirectory, "Shadowbound.apk"));
+            }
+            catch (Exception exception)
+            {
+                Debug.LogError(
+                    "Shadowbound: the build failed. This usually means the Android module " +
+                    "(with SDK, NDK and JDK) is not installed for this Unity version.\n" + exception);
+            }
+        }
 
+        /// <summary>
+        /// Entry point for command-line and CI builds. game-ci's unity-builder
+        /// calls this via -executeMethod.
+        ///
+        /// Two differences from the menu version matter here. The output goes
+        /// where the CI action collects artifacts from rather than to Builds/.
+        /// And a content problem THROWS instead of being logged: a CI job that
+        /// logs an error and still exits successfully ships a broken APK with a
+        /// green tick next to it, which is worse than no CI at all.
+        /// </summary>
+        public static void BuildAndroidFromCommandLine()
+        {
+            CreatePlayableScene();
+            ConfigureForAndroid();
+
+            int contentErrors = CountContentErrors();
+
+            if (contentErrors > 0)
+            {
+                throw new BuildFailedException(
+                    "Shadowbound: " + contentErrors + " content error(s); refusing to build.");
+            }
+
+            string outputPath = Path.Combine("build", "Android", "Shadowbound.apk");
+            string outputDirectory = Path.GetDirectoryName(outputPath);
+
+            if (!string.IsNullOrEmpty(outputDirectory))
+            {
+                Directory.CreateDirectory(outputDirectory);
+            }
+
+            BuildAndroidApkTo(outputPath);
+        }
+
+        private static int CountContentErrors()
+        {
+            try
+            {
+                ContentReport report = ContentValidator.ValidateShippedContent();
+                int errors = 0;
+
+                for (int i = 0; i < report.Problems.Count; i++)
+                {
+                    if (report.Problems[i].Severity == ContentProblemSeverity.Error)
+                    {
+                        errors++;
+                    }
+                }
+
+                return errors;
+            }
+            catch (Exception exception)
+            {
+                // Content that cannot even be constructed is itself a build blocker.
+                Debug.LogError("Shadowbound: content failed to build: " + exception);
+                return 1;
+            }
+        }
+
+        /// <summary>The build itself. Throws when the build fails, for any caller that must not continue.</summary>
+        private static void BuildAndroidApkTo(string outputPath)
+        {
             var options = new BuildPlayerOptions
             {
                 scenes = new[] { ScenePath },
@@ -199,28 +271,19 @@ namespace Shadowbound.Editor
                 options = BuildOptions.None
             };
 
-            try
-            {
-                BuildReport report = BuildPipeline.BuildPlayer(options);
-                BuildSummary summary = report.summary;
+            BuildReport report = BuildPipeline.BuildPlayer(options);
+            BuildSummary summary = report.summary;
 
-                if (summary.result == BuildResult.Succeeded)
-                {
-                    Debug.Log(
-                        "Shadowbound: APK built at " + outputPath +
-                        " (" + (summary.totalSize / (1024 * 1024)) + " MB in " + summary.totalTime + ").");
-                }
-                else
-                {
-                    Debug.LogError("Shadowbound: build " + summary.result + " with " + summary.totalErrors + " error(s).");
-                }
-            }
-            catch (Exception exception)
+            if (summary.result != BuildResult.Succeeded)
             {
-                Debug.LogError(
-                    "Shadowbound: the build failed. This usually means the Android module " +
-                    "(with SDK, NDK and JDK) is not installed for this Unity version.\n" + exception);
+                throw new BuildFailedException(
+                    "Shadowbound: build " + summary.result + " with " +
+                    summary.totalErrors + " error(s).");
             }
+
+            Debug.Log(
+                "Shadowbound: APK built at " + outputPath +
+                " (" + (summary.totalSize / (1024 * 1024)) + " MB in " + summary.totalTime + ").");
         }
 
         [MenuItem("Shadowbound/Log Save Location", false, 60)]

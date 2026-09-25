@@ -148,6 +148,36 @@ adb install -r Builds/Shadowbound.apk
 | Orientation | Landscape, both ways | A third-person action game is unplayable in portrait |
 | Minimum API | 24 (Android 7.0) | Covers the target device range without legacy branches |
 
+## Continuous integration (GitHub Actions)
+
+`.github/workflows/ci.yml` runs two jobs:
+
+| Job | When | What it does |
+| --- | --- | --- |
+| **verify** | Every push and pull request | The three verification gates: core purity + test suite, the C# 9 syntax gate, and the Unity layer type-check. About a minute, no Unity licence needed. |
+| **android** | Pushes to `main` and manual dispatch | Builds the real APK with Unity 6 (`6000.0.32f1` from `ProjectVersion.txt`) inside game-ci's container, then uploads `Shadowbound.apk` as a downloadable artifact. 15–40 minutes. |
+
+The android job **skips** (not fails) until Unity licence secrets are configured.
+To enable it, add repository secrets under *Settings → Secrets and variables →
+Actions*:
+
+| Licence type | Secrets |
+| --- | --- |
+| Personal (free) | `UNITY_LICENSE` (contents of the `.ulf` licence file), `UNITY_EMAIL`, `UNITY_PASSWORD` |
+| Professional | `UNITY_SERIAL`, `UNITY_EMAIL`, `UNITY_PASSWORD` |
+
+Getting the personal licence file needs a one-time manual activation — game-ci's
+instructions are at <https://game.ci/docs/github/activation>. Use a Unity
+password without special characters; the activation step is known to stumble on
+them.
+
+The build runs `Shadowbound.Editor.ProjectSetup.BuildAndroidFromCommandLine`,
+which does the same work as **Shadowbound → Build Android APK** but **throws on
+content errors or build failure** — a CI job that logs an error and exits
+successfully ships a broken APK with a green tick next to it. The APK is signed
+with Unity's debug keystore (no custom keystore is configured), which is enough
+for `adb install` testing; release signing is a later step.
+
 ## The in-game menu
 
 Opened with `Esc` / `Tab`, or the button in the top-right corner of the screen.

@@ -21,8 +21,9 @@ combat, semi-open world, story-driven PvE.
 | Authored content (creatures, items, quests, chapters, regions) | Done — validated by a tested validator |
 | Unity layer (input, camera, views, HUD, menu, saves) | **Type-checks against real Unity assemblies** — never executed |
 | In-game menu (equipment, consumables, attributes, save/load, resume) | Written — never executed |
-| Editor tooling (scene setup, Android config) | Written — **not compiled** (no UnityEditor reference assembly) |
-| Android APK | **Not produced** — requires Unity with the Android module |
+| Editor tooling (scene setup, Android config, CI build entry) | Written — **not compiled** (no UnityEditor reference assembly) |
+| GitHub Actions CI (verify + APK build via game-ci) | Written — **never executed** (nothing has been pushed yet) |
+| Android APK | **Not produced** — requires Unity with the Android module, or the CI `android` job with a Unity licence secret |
 
 ### Read this before assuming it works
 

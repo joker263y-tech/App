@@ -193,7 +193,9 @@ Be explicit about this, because the gaps are real.
 | **The `Editor` assembly compiling** | No `UnityEditor` reference assembly is available. | Open the project in Unity 6 and read the Console. |
 | **Runtime behaviour of anything** | No Unity installation. Nothing in the project has ever executed. | Press Play. |
 | **Anything visual** | Same reason. No rendering. | Press Play. |
-| **The Android build** | No Unity, no Android SDK, no NDK, no JDK. No APK can be produced without them. | `Shadowbound → Build Android APK` with the Android module installed. |
+| **The Android build** | No Unity, no Android SDK, no NDK, no JDK. No APK can be produced without them. | `Shadowbound → Build Android APK` with the Android module installed, or the CI `android` job. |
+| **The GitHub Actions workflow** | `.github/workflows/ci.yml` is written but has **never executed** — no push has reached GitHub yet (credentials unavailable at the time of writing), and no Actions run has been observed. Its YAML parses and its commands are the same ones listed above, but that is not the same as a run. | Push the repository and read the Actions tab. |
+| **`ProjectSetup.BuildAndroidFromCommandLine`** | Part of the Editor assembly, which has never compiled anywhere. | The CI `android` job, or Unity's Console. |
 | **Touch controls on a device** | Requires hardware. | Install the APK and play. |
 | **Performance on target hardware** | Requires hardware. | Profile on a mid-range phone. |
 | **Compiling on Unity 6 specifically** | The reference assemblies are Unity **2021.3**. Code that compiles here also compiles on Unity 6 *unless* Unity 6 removed an API. | Open in Unity 6. |
