@@ -1,0 +1,20 @@
+{
+  "name": "Shadowbound Cloud Desktop",
+  "features": {
+    "ghcr.io/devcontainers/features/desktop-lite:1": {
+      "password": "codespaces",
+      "webPort": "6080",
+      "vncPort": "5901"
+    }
+  },
+  "forwardPorts": [6080, 5901],
+  "portsAttributes": {
+    "6080": {
+      "label": "Unity Cloud Desktop",
+      "protocol": "http"
+    },
+    "5901": {
+      "label": "VNC"
+    }
+  }
+}
