@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Shadowbound.Core.Content;
 using Shadowbound.Core.Items;
 using Shadowbound.Core.Progression;
 using Shadowbound.Core.Serialization;
@@ -38,11 +39,15 @@ namespace Shadowbound.Game.Ui
         private const float ReferenceWidth = 1920f;
         private const float ReferenceHeight = 1080f;
 
-        private const int RowPool = 14;
-        private const float RowHeight = 64f;
-        private const float RowGap = 8f;
+        // Sizing is set so the whole pool fits the panel: with these numbers the
+        // last row ends above the status line and the first begins below the title.
+        // The previous numbers drew rows 12+ below the panel and off the screen,
+        // which made anything past the first few rows unreachable on a device.
+        private const int RowPool = 16;
+        private const float RowHeight = 42f;
+        private const float RowGap = 5f;
         private const float RowWidth = 1000f;
-        private const float FirstRowY = -150f;
+        private const float FirstRowY = -100f;
 
         private sealed class Row
         {
@@ -66,6 +71,24 @@ namespace Shadowbound.Game.Ui
 
         /// <summary>Rebuilt on open and after any action, so it always reflects reality.</summary>
         private readonly List<Action> _pendingActions = new List<Action>(RowPool);
+
+        /// <summary>
+        /// Which page of the menu is showing.
+        ///
+        /// Paged rather than one long list because the pool is finite and the menu
+        /// has grown past it: equipment, carried items, twelve attributes and saves
+        /// cannot all share one screen, and a list that runs off the bottom is the
+        /// same as a feature that does not exist.
+        /// </summary>
+        private enum MenuPage
+        {
+            Main = 0,
+            Attributes = 1,
+            World = 2,
+            Saves = 3
+        }
+
+        private MenuPage _page = MenuPage.Main;
 
         private bool _pointerWasDown;
         private float _statusTimer;
@@ -331,6 +354,45 @@ namespace Shadowbound.Game.Ui
                 return;
             }
 
+            switch (_page)
+            {
+                case MenuPage.Attributes:
+                    AddRow("<  BACK", new Color(0.72f, 0.66f, 0.44f), () => GoTo(MenuPage.Main));
+                    AddAttributeRows();
+                    break;
+
+                case MenuPage.World:
+                    AddRow("<  BACK", new Color(0.72f, 0.66f, 0.44f), () => GoTo(MenuPage.Main));
+                    AddTravelRows();
+                    break;
+
+                case MenuPage.Saves:
+                    AddRow("<  BACK", new Color(0.72f, 0.66f, 0.44f), () => GoTo(MenuPage.Main));
+                    AddSaveRows();
+                    break;
+
+                default:
+                    AddMainRows();
+                    break;
+            }
+
+            HideUnusedRows(_pendingActions.Count);
+
+            for (int i = 0; i < _pendingActions.Count; i++)
+            {
+                _rows[i].Activate = _pendingActions[i];
+                _rows[i].Root.SetActive(true);
+            }
+        }
+
+        private void GoTo(MenuPage page)
+        {
+            _page = page;
+            Rebuild();
+        }
+
+        private void AddMainRows()
+        {
             AddHeader("EQUIPPED");
 
             for (int i = 0; i < EquipSlots.All.Length; i++)
@@ -344,24 +406,22 @@ namespace Shadowbound.Game.Ui
 
             if (carried == 0)
             {
-                AddNote("Nothing equippable in the bag.");
+                AddNote("Nothing usable in the bag.");
             }
 
-            AddHeader("THE WORLD");
+            // The two things a menu must never hide: where the character sheet is,
+            // and unspent points. Points that exist with nothing to spend them on is
+            // the bug this page exists to prevent.
+            int points = _game.Session.Progression.UnspentAttributePoints;
 
-            AddTravelRows();
+            AddRow(
+                points > 0 ? "ATTRIBUTES   (" + points + " to spend)" : "ATTRIBUTES",
+                points > 0 ? new Color(0.95f, 0.88f, 0.60f) : new Color(0.82f, 0.88f, 0.94f),
+                () => GoTo(MenuPage.Attributes));
 
-            AddHeader("SAVES");
+            AddRow("THE WORLD", new Color(0.82f, 0.88f, 0.94f), () => GoTo(MenuPage.World));
 
-            AddSaveRows();
-
-            HideUnusedRows(_pendingActions.Count);
-
-            for (int i = 0; i < _pendingActions.Count; i++)
-            {
-                _rows[i].Activate = _pendingActions[i];
-                _rows[i].Root.SetActive(true);
-            }
+            AddRow("SAVES", new Color(0.82f, 0.88f, 0.94f), () => GoTo(MenuPage.Saves));
         }
 
         private void HideUnusedRows(int used)
@@ -440,9 +500,8 @@ namespace Shadowbound.Game.Ui
             {
                 if (added >= 5)
                 {
-                    // The pool is finite and saves need their rows too.
                     AddNote("...and more in the bag.");
-                    break;
+                    return added;
                 }
 
                 if (!_game.Session.Items.TryGet(entry.Key, out ItemDefinition definition) ||
@@ -480,7 +539,179 @@ namespace Shadowbound.Game.Ui
                 added++;
             }
 
+            // Second pass: consumables. Before this existed the game handed out
+            // ember draughts as quest rewards and there was nothing anywhere that
+            // could drink one - the item was a reward that did nothing.
+            foreach (KeyValuePair<string, int> entry in _game.Session.Inventory.Entries)
+            {
+                if (added >= 5)
+                {
+                    AddNote("...and more in the bag.");
+                    return added;
+                }
+
+                if (!_game.Session.Items.TryGet(entry.Key, out ItemDefinition definition) ||
+                    definition == null ||
+                    !definition.IsConsumable)
+                {
+                    continue;
+                }
+
+                AddUseRow(entry.Key, entry.Value, definition);
+                added++;
+            }
+
             return added;
+        }
+
+        private void AddUseRow(string id, int quantity, ItemDefinition definition)
+        {
+            string name = definition.DisplayName;
+
+            AddRow(
+                "Use  " + name + "  x" + quantity + DescribeEffects(definition),
+                new Color(0.88f, 0.82f, 0.72f),
+                () =>
+                {
+                    if (_game.Session.TryUseConsumable(id, out ConsumableFailure failure))
+                    {
+                        ShowStatus("Used " + name + ".");
+                    }
+                    else
+                    {
+                        ShowStatus("Cannot use it: " + DescribeUseFailure(failure));
+                    }
+
+                    Rebuild();
+                });
+        }
+
+        /// <summary>What a consumable will do, so drinking one is never a guess.</summary>
+        private static string DescribeEffects(ItemDefinition definition)
+        {
+            ItemEffect[] effects = definition.Effects;
+
+            if (effects == null || effects.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            var text = new System.Text.StringBuilder("  (");
+
+            for (int i = 0; i < effects.Length; i++)
+            {
+                if (i > 0)
+                {
+                    text.Append(", ");
+                }
+
+                ItemEffect effect = effects[i];
+
+                switch (effect.Kind)
+                {
+                    case EffectKind.RestoreHealth:
+                        text.Append('+').Append(Mathf.RoundToInt(effect.Amount)).Append(" health");
+                        break;
+
+                    case EffectKind.RestoreStamina:
+                        text.Append('+').Append(Mathf.RoundToInt(effect.Amount)).Append(" stamina");
+                        break;
+
+                    case EffectKind.ApplyStatus:
+                        text.Append(effect.Status.ToString().ToLowerInvariant());
+                        text.Append(' ').Append(effect.Duration.ToString("0.#")).Append('s');
+                        break;
+
+                    case EffectKind.GrantExperience:
+                        text.Append('+').Append(Mathf.RoundToInt(effect.Amount)).Append(" experience");
+                        break;
+                }
+            }
+
+            text.Append(')');
+            return text.ToString();
+        }
+
+        private static string DescribeUseFailure(ConsumableFailure failure)
+        {
+            switch (failure)
+            {
+                case ConsumableFailure.UnknownItem: return "you are not carrying it";
+                case ConsumableFailure.NotConsumable: return "it cannot be used";
+                case ConsumableFailure.NotHeld: return "the last one is gone";
+                default: return "not possible";
+            }
+        }
+
+        // -------------------------------- attributes ------------------------------
+
+        /// <summary>
+        /// One row per stat, showing exactly what a point buys.
+        ///
+        /// Points used to pile up on the HUD with nothing in the game able to spend
+        /// them. The row therefore shows both halves of the choice - the value now
+        /// and the value after - so spending is a decision rather than a gamble.
+        /// </summary>
+        private void AddAttributeRows()
+        {
+            int points = _game.Session.Progression.UnspentAttributePoints;
+
+            if (points <= 0)
+            {
+                AddNote("No points to spend yet. They arrive with levels and quests.");
+            }
+            else
+            {
+                AddNote("Points to spend: " + points + ".  Each point buys the shown increase.");
+            }
+
+            for (int i = 0; i < StatIds.All.Length; i++)
+            {
+                AddAttributeRow(StatIds.All[i], points > 0);
+            }
+        }
+
+        private void AddAttributeRow(StatId stat, bool canSpend)
+        {
+            float current = _game.Session.Player.Stats.Get(stat);
+            float award = GameContent.AttributeAward(stat);
+
+            string label = StatIds.Name(stat) + ":  " + FormatStat(stat, current) +
+                           "  ->  " + FormatStat(stat, current + award);
+
+            if (!canSpend)
+            {
+                AddRow(label, new Color(0.55f, 0.55f, 0.58f), null);
+                return;
+            }
+
+            StatId captured = stat;
+
+            AddRow(
+                label,
+                new Color(0.82f, 0.88f, 0.82f),
+                () =>
+                {
+                    if (_game.Session.Progression.TrySpendAttributePoint(
+                            captured,
+                            GameContent.AttributeAward(captured)))
+                    {
+                        ShowStatus(StatIds.Name(captured) + " increased.");
+                    }
+                    else
+                    {
+                        ShowStatus("No points to spend.");
+                    }
+
+                    Rebuild();
+                });
+        }
+
+        private static string FormatStat(StatId stat, float value)
+        {
+            return StatIds.IsFraction(stat)
+                ? Mathf.RoundToInt(value * 100f) + "%"
+                : value.ToString("0.#");
         }
 
         /// <summary>

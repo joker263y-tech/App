@@ -326,6 +326,34 @@ namespace Shadowbound.Core.Content
             };
         }
 
+        /// <summary>
+        /// What one attribute point buys in each stat.
+        ///
+        /// Points arrive slower than gear does, so one point is worth a little less
+        /// than one level of automatic growth: enough to shape a character (Vitality
+        /// over Attack) without outcompeting the items they find. Fraction stats are
+        /// stored as fractions, so 0.01 there is one percentage point.
+        /// </summary>
+        public static float AttributeAward(StatId stat)
+        {
+            switch (stat)
+            {
+                case StatId.MaxHealth: return 15f;
+                case StatId.MaxStamina: return 8f;
+                case StatId.AttackPower: return 2f;
+                case StatId.ShadowPower: return 2f;
+                case StatId.Armor: return 2f;
+                case StatId.MoveSpeed: return 0.15f;
+                case StatId.CritChance: return 0.01f;
+                case StatId.CritMultiplier: return 0.05f;
+                case StatId.HealthRegen: return 0.4f;
+                case StatId.StaminaRegen: return 0.6f;
+                case StatId.CooldownRate: return 0.05f;
+                case StatId.StatusResistance: return 0.02f;
+                default: return 0f;
+            }
+        }
+
         /// <summary>A level 1 Warden at full health, ready to place in a scene.</summary>
         public static Combatant CreatePlayer(string id = "warden")
         {

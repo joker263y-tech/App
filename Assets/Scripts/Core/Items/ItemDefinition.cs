@@ -73,6 +73,15 @@ namespace Shadowbound.Core.Items
         }
     }
 
+    /// <summary>Why a consumable could not be used, for the message the player sees.</summary>
+    public enum ConsumableFailure
+    {
+        None = 0,
+        UnknownItem = 1,
+        NotConsumable = 2,
+        NotHeld = 3
+    }
+
     /// <summary>
     /// Authored definition of an item. Shared by every copy of that item, so
     /// nothing mutable belongs here. The modifier templates carry no source; an

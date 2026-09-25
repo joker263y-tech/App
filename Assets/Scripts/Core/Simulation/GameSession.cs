@@ -564,6 +564,90 @@ namespace Shadowbound.Core.Simulation
             return true;
         }
 
+        // -------------------------------- consumables -----------------------------
+
+        /// <summary>
+        /// Uses one of a consumable stack, applying its effects to the player and
+        /// taking it out of the bag.
+        ///
+        /// Effects clamp rather than refuse: a draught drunk at full health is spent
+        /// and heals nothing. Deciding whether a use is "worth it" is the player's
+        /// call to make, and a rule that guesses at it would also have to arbitrate
+        /// partial cases - full health but no stamina, and so on.
+        ///
+        /// Like equipment, this lives here rather than in the UI because it is the
+        /// rule that decides when an item is gone.
+        /// </summary>
+        public bool TryUseConsumable(string itemId, out ConsumableFailure failure)
+        {
+            failure = ConsumableFailure.UnknownItem;
+
+            if (string.IsNullOrEmpty(itemId) || !Items.TryGet(itemId, out ItemDefinition definition) || definition == null)
+            {
+                return false;
+            }
+
+            if (!definition.IsConsumable)
+            {
+                failure = ConsumableFailure.NotConsumable;
+                return false;
+            }
+
+            if (Inventory.Remove(itemId, 1) <= 0)
+            {
+                failure = ConsumableFailure.NotHeld;
+                return false;
+            }
+
+            ItemEffect[] effects = definition.Effects;
+
+            if (effects != null)
+            {
+                for (int i = 0; i < effects.Length; i++)
+                {
+                    ApplyItemEffect(effects[i], definition);
+                }
+            }
+
+            // The bag changed, so collection objectives may have moved - possibly
+            // backwards, if the consumed item was one the player had to hold.
+            SyncCollectionObjectives();
+            AdvanceQuests();
+
+            failure = ConsumableFailure.None;
+            return true;
+        }
+
+        private void ApplyItemEffect(ItemEffect effect, object source)
+        {
+            switch (effect.Kind)
+            {
+                case EffectKind.RestoreHealth:
+                    Player.Vitals.Heal(effect.Amount);
+                    break;
+
+                case EffectKind.RestoreStamina:
+                    Player.Vitals.RestoreStamina(effect.Amount);
+                    break;
+
+                case EffectKind.ApplyStatus:
+                    Player.Statuses.Apply(StatusEffect.Modifier(
+                        effect.Status,
+                        effect.Amount,
+                        effect.Duration,
+                        source));
+                    break;
+
+                case EffectKind.GrantExperience:
+                    int levels = Progression.AddExperience((int)effect.Amount);
+                    if (levels > 0)
+                    {
+                        LevelledUp?.Invoke(levels);
+                    }
+                    break;
+            }
+        }
+
         // -------------------------------- collection ------------------------------
 
         /// <summary>True when the encounter has no living hostiles left.</summary>
@@ -666,6 +750,7 @@ namespace Shadowbound.Core.Simulation
                 FacingDegrees = Player.FacingDegrees,
                 TotalExperience = Progression.TotalExperience,
                 UnspentAttributePoints = Progression.UnspentAttributePoints,
+                StatBoosts = Progression.CopyStatBoosts(),
                 Inventory = Inventory.ToStacks(),
                 Equipment = Equipment.ToStacks(),
                 Quests = CollectQuestSnapshots(),
@@ -701,7 +786,7 @@ namespace Shadowbound.Core.Simulation
             Player.SetPosition(save.Position);
             Player.SetFacing(save.FacingDegrees);
 
-            Progression.LoadFrom(save.TotalExperience, save.UnspentAttributePoints);
+            Progression.LoadFrom(save.TotalExperience, save.UnspentAttributePoints, save.StatBoosts);
             Inventory.LoadFrom(save.Inventory, out _);
             Equipment.LoadFrom(save.Equipment);
             ApplyQuestSnapshots(save.Quests);

@@ -63,6 +63,7 @@ namespace Shadowbound.Core.Serialization
             data.Set("facing", save.FacingDegrees);
             data.Set("totalExperience", save.TotalExperience);
             data.Set("unspentAttributePoints", save.UnspentAttributePoints);
+            data.Set("statBoosts", FloatsToJson(save.StatBoosts));
             data.Set("inventory", StacksToJson(save.Inventory));
             data.Set("equipment", StacksToJson(save.Equipment));
             data.Set("quests", QuestsToJson(save.Quests));
@@ -135,6 +136,7 @@ namespace Shadowbound.Core.Serialization
             save.FacingDegrees = data.Get("facing")?.AsFloat(0f) ?? 0f;
             save.TotalExperience = data.Get("totalExperience")?.AsInt(0) ?? 0;
             save.UnspentAttributePoints = data.Get("unspentAttributePoints")?.AsInt(0) ?? 0;
+            save.StatBoosts = FloatsFromJson(data.Get("statBoosts"));
 
             save.Inventory = StacksFromJson(data.Get("inventory"));
             save.Equipment = StacksFromJson(data.Get("equipment"));
@@ -344,6 +346,40 @@ namespace Shadowbound.Core.Serialization
             }
 
             return quests;
+        }
+
+        private static JsonValue FloatsToJson(float[] values)
+        {
+            var array = JsonValue.NewArray();
+
+            if (values == null)
+            {
+                return array;
+            }
+
+            for (int i = 0; i < values.Length; i++)
+            {
+                array.Add(values[i]);
+            }
+
+            return array;
+        }
+
+        private static float[] FloatsFromJson(JsonValue node)
+        {
+            if (node == null || node.Kind != JsonKind.Array)
+            {
+                return Array.Empty<float>();
+            }
+
+            var values = new float[node.Count];
+
+            for (int i = 0; i < node.Count; i++)
+            {
+                values[i] = node.At(i)?.AsFloat(0f) ?? 0f;
+            }
+
+            return values;
         }
 
         private static JsonValue StringsToJson(List<string> values)

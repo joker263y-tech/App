@@ -45,6 +45,15 @@ namespace Shadowbound.Core.Progression
         /// </summary>
         private int _growthAppliedLevels;
 
+        /// <summary>
+        /// Cumulative boosts bought with spent attribute points, indexed by StatId.
+        ///
+        /// Tracked separately from growth because base stats are rebuilt from the
+        /// growth table on every load. Without this record, loading a save would
+        /// silently erase every point the player had ever spent.
+        /// </summary>
+        private readonly float[] _statBoosts = new float[StatIds.Count];
+
         public ProgressionSystem(Combatant owner, ExperienceCurve curve, StatGrowth[] growth)
         {
             _owner = owner ?? throw new ArgumentNullException(nameof(owner));
@@ -156,6 +165,7 @@ namespace Shadowbound.Core.Progression
             }
 
             UnspentAttributePoints--;
+            _statBoosts[(int)stat] += amount;
             _owner.Stats.AddToBase(stat, amount);
             return true;
         }
@@ -174,7 +184,7 @@ namespace Shadowbound.Core.Progression
         /// growth table applies to existing characters instead of leaving them
         /// permanently built on an old table.
         /// </summary>
-        public void LoadFrom(int totalExperience, int unspentPoints)
+        public void LoadFrom(int totalExperience, int unspentPoints, float[] statBoosts = null)
         {
             _totalExperience = totalExperience < 0 ? 0 : totalExperience;
             Level = _curve.LevelForExperience(_totalExperience);
@@ -185,6 +195,45 @@ namespace Shadowbound.Core.Progression
 
             UnspentAttributePoints = unspentPoints < 0 ? 0 : unspentPoints;
             _owner.Level = Level;
+
+            ApplyStatBoosts(statBoosts);
+        }
+
+        /// <summary>Boost bought by spent points in one stat. Part of the saved character.</summary>
+        public float StatBoostOn(StatId stat)
+        {
+            return _statBoosts[(int)stat];
+        }
+
+        /// <summary>Copy of every stat boost, for the save writer.</summary>
+        public float[] CopyStatBoosts()
+        {
+            var copy = new float[StatIds.Count];
+            Array.Copy(_statBoosts, copy, _statBoosts.Length);
+            return copy;
+        }
+
+        /// <summary>
+        /// Replaces the spent-point boosts with loaded ones, applying only the
+        /// difference to base stats. Idempotent for the same reason growth is:
+        /// loading the same save twice must not stack the same points twice.
+        /// </summary>
+        private void ApplyStatBoosts(float[] target)
+        {
+            for (int i = 0; i < _statBoosts.Length; i++)
+            {
+                float desired = target != null && i < target.Length && target[i] > 0f
+                    ? target[i]
+                    : 0f;
+
+                float delta = desired - _statBoosts[i];
+                if (delta != 0f)
+                {
+                    _owner.Stats.AddToBase((StatId)i, delta);
+                }
+
+                _statBoosts[i] = desired;
+            }
         }
 
         /// <summary>

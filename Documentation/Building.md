@@ -153,18 +153,28 @@ adb install -r Builds/Shadowbound.apk
 Opened with `Esc` / `Tab`, or the button in the top-right corner of the screen.
 The world freezes while it is open, so nothing swings at you while you read it.
 
-| Section | What it does |
+The menu is **paged**: ATTRIBUTES, THE WORLD and SAVES open their own screens,
+each with a `BACK` row. Everything stays on one screen's worth of rows, so no
+action can hide below the bottom edge on a small display.
+
+| Row / page | What it does |
 | --- | --- |
-| **Resume** | Closes the menu and unfreezes the world. Always the first row. |
-| **The World** | Lists every region. Places you can go are tappable; places you cannot are greyed out with the reason, so a story gate is visible rather than looking like a bug. |
+| **Resume** | Closes the menu and unfreezes the world. Always the first row, on every page. |
 | **Equipped** | Shows each slot and what is in it. Tapping one takes the item off and returns it to the bag. |
-| **Carried** | Lists equippable items in the bag with their stat bonuses, so the choice is not blind. Tapping wears one. |
+| **Carried** | What is in the bag: `Use` rows for consumables with their effects spelled out (e.g. `+120 health, +40 stamina`), and `Wear` rows for equipment with its stat bonuses. Tapping `Use` drinks it; tapping `Wear` puts it on. |
+| **Attributes** | One row per stat: its value now, and what one point would buy (`345 -> 360`). Tapping spends a point; the page is highlighted on the main screen while points are unspent. |
+| **The World** | Lists every region. Places you can go are tappable; places you cannot are greyed out with the reason, so a story gate is visible rather than looking like a bug. |
 | **Saves** | Lists save slots with the profile, level and playtime. Tapping loads; the trailing `[delete]` wording on a slot marks it as loadable. The last row saves to the current slot. |
 
 Swapping equipment is a single transaction: the incoming item leaves the bag and
 whatever it replaced goes back in, so nothing is lost even when the bag is full.
 Taking an item off when the bag is full leaves it equipped and says so, rather
 than destroying it.
+
+Using a consumable spends the item even when it would heal nothing — effects
+clamp rather than refuse, so whether a draught is worth it stays the player's
+call. Spent attribute points are part of the save and survive quitting and
+reloading.
 
 ## Saves
 

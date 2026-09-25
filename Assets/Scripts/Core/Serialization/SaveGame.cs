@@ -66,6 +66,15 @@ namespace Shadowbound.Core.Serialization
 
         public int UnspentAttributePoints;
 
+        /// <summary>
+        /// Cumulative boosts bought with spent attribute points, indexed by StatId.
+        ///
+        /// The totals are saved rather than the point counts, so the numbers survive
+        /// even if the award table is rebalanced later: an old save then loads with
+        /// exactly the stats the player had, not what the new table would pay out.
+        /// </summary>
+        public float[] StatBoosts = Array.Empty<float>();
+
         public List<ItemStack> Inventory = new List<ItemStack>();
 
         public List<ItemStack> Equipment = new List<ItemStack>();
@@ -105,6 +114,7 @@ namespace Shadowbound.Core.Serialization
                 FacingDegrees = FacingDegrees,
                 TotalExperience = TotalExperience,
                 UnspentAttributePoints = UnspentAttributePoints,
+                StatBoosts = (float[])StatBoosts.Clone(),
                 RngState = RngState,
                 RngIncrement = RngIncrement,
                 Inventory = new List<ItemStack>(Inventory),

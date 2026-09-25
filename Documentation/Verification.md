@@ -10,7 +10,7 @@ claim as "the game works", and the difference matters.
 | --- | --- | --- |
 | Core purity gate | `bash Tools/check-core-purity.sh` | Pass — core is engine-free |
 | Core compiles under Unity's constraints | `bash Tools/test-core.sh` | Pass — netstandard2.1, C# 9, 0 warnings |
-| Core test suite | `bash Tools/test-core.sh` | **546 passed, 0 failed** |
+| Core test suite | `bash Tools/test-core.sh` | **563 passed, 0 failed** |
 | Every C# file parses at C# 9 | `bash Tools/check-syntax.sh` | Pass — 47 files, no syntax errors |
 | **Unity layer type-checks against real Unity assemblies** | `bash Tools/check-unity-layer.sh` | Pass — **0 errors, 0 warnings** |
 
@@ -28,10 +28,11 @@ The harness is also proven to fail when it should: a deliberate
 
 Coverage spans numerics, determinism, stats, damage and mitigation, vitals, status
 effects, abilities, attack resolution, enemy AI, items and loot, progression,
-quests, chapters, the world graph, JSON serialisation and save migration, plus two
-integration tests: a headless encounter driven to completion, and a full session
+quests, chapters, the world graph, JSON serialisation and save migration, plus
+integration tests: a headless encounter driven to completion, a full session
 where a kill turns into loot, experience, journal progress and a save that
-round-trips.
+round-trips, the consumable path (quest reward → draught → drunk → healed), and
+attribute-point spending including that spent points survive saving and loading.
 
 ### The Unity layer type-check
 
@@ -139,6 +140,37 @@ The route the story requires is now asserted step by step in
 `RegionTravelTests.TheStorysRequiredRegions_AreReachableInOrder`, so a future
 change to a region's gate cannot silently strand the story again.
 
+### 5. The second pass: consumables, attribute points, and rows below the screen
+
+Re-auditing the same standard after the first four fixes found three more
+unreachable paths, in the same shape as before:
+
+- **Consumables could never be used.** The quest chain hands out five ember
+  draughts, the item database described their effects, `Vitals.Heal` worked and
+  was tested — and nothing in the game connected them. The reward for the opening
+  quest was an item that did nothing. `GameSession.TryUseConsumable` is the rule,
+  and the menu's CARRIED section now lists `Use` rows with the effects spelled out.
+- **Attribute points could never be spent.** Levels and quests granted points,
+  the HUD counted them on screen, `ProgressionSystem.TrySpendAttributePoint`
+  existed and was tested — and nothing called it. The menu now has an ATTRIBUTES
+  page showing each stat's value before and after, wired to the same call.
+  Spending exposed a second problem: base stats are rebuilt from the growth table
+  on every load, so spent points would have **vanished on the next load**. The
+  cumulative boosts are now part of the save (`statBoosts`, saved as totals so
+  rebalancing the award table later cannot retroactively rebuild old characters),
+  and `LoadingTheSameSaveTwice_DoesNotStackTheBoosts` pins the idempotence down.
+- **The menu drew its rows off the screen.** The row pool held 14 rows but the
+  layout put row 12+ below the panel edge and off the display — so with a full
+  bag, the save rows were unreachable. The menu is now paged (character,
+  attributes, world, saves) and the row geometry fits the whole pool inside the
+  panel. A feature whose button renders at y = -680 is not a feature.
+
+The pattern is the same in all seven cases: each system was complete and tested
+*as a system*, and missing *as a path a player walks*. The tests for these fixes
+are written at the same level as the fixes — `ConsumableTests` and
+`AttributePointTests` drive `GameSession` the way the menu does, not the way the
+unit tests of the underlying systems did.
+
 ### Content validation moved into the tested core
 
 Content cross-checking used to live in the editor tooling, where it could only run
@@ -173,7 +205,7 @@ has been run, seen, or installed.
 ## Reproducing the verification
 
 ```bash
-# The core: purity gate, compile under Unity's constraints, 511 tests.
+# The core: purity gate, compile under Unity's constraints, 563 tests.
 bash Tools/test-core.sh
 
 # Just the assembly boundary rule.
