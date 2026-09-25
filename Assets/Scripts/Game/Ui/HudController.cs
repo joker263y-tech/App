@@ -755,10 +755,12 @@ namespace Shadowbound.Game.Ui
 
         private void RefreshAbilities()
         {
-            if (_playerParticipant == null)
-            {
-                _playerParticipant = _session.Encounter.Find(_session.Player.Id);
-            }
+            // Resolved every frame rather than cached. Travel replaces the encounter,
+            // and with it the participant that owns the player's ability controller - so
+            // a cached reference would leave the cooldown display frozen on the values
+            // from the region the player left. A handful of id comparisons per frame is
+            // not worth being wrong for.
+            _playerParticipant = _session.Encounter.Find(_session.Player.Id);
 
             AbilityController controller = _playerParticipant?.Abilities;
             if (controller == null)

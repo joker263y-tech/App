@@ -4,6 +4,7 @@ using Shadowbound.Core.Items;
 using Shadowbound.Core.Progression;
 using Shadowbound.Core.Serialization;
 using Shadowbound.Core.Stats;
+using Shadowbound.Core.World;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
@@ -346,6 +347,10 @@ namespace Shadowbound.Game.Ui
                 AddNote("Nothing equippable in the bag.");
             }
 
+            AddHeader("THE WORLD");
+
+            AddTravelRows();
+
             AddHeader("SAVES");
 
             AddSaveRows();
@@ -476,6 +481,86 @@ namespace Shadowbound.Game.Ui
             }
 
             return added;
+        }
+
+        /// <summary>
+        /// Lists the regions the player can move to.
+        ///
+        /// Gated regions are shown greyed out with the reason rather than hidden. A
+        /// story gate the player cannot see is indistinguishable from a bug, and
+        /// hiding them would also hide the fact that the world is bigger than the
+        /// region they are standing in.
+        /// </summary>
+        private void AddTravelRows()
+        {
+            IReadOnlyList<RegionDefinition> regions = _game.Session.World.All;
+            int added = 0;
+
+            for (int i = 0; i < regions.Count; i++)
+            {
+                RegionDefinition region = regions[i];
+
+                if (region == null || string.IsNullOrEmpty(region.Id))
+                {
+                    continue;
+                }
+
+                string id = region.Id;
+
+                if (string.Equals(id, _game.Session.RegionId, StringComparison.Ordinal))
+                {
+                    AddRow("Here:  " + region.DisplayName, new Color(0.95f, 0.92f, 0.78f), null);
+                    continue;
+                }
+
+                // The same rule the gate uses, so the menu cannot offer a place the
+                // world graph would refuse.
+                if (!_game.Session.CanTravelTo(id, out AccessFailure access))
+                {
+                    AddRow(
+                        region.DisplayName + "  (" + DescribeAccess(access) + ")",
+                        new Color(0.55f, 0.55f, 0.58f),
+                        null);
+
+                    continue;
+                }
+
+                if (added >= 4)
+                {
+                    AddNote("...and further places beyond these.");
+                    break;
+                }
+
+                AddRow(
+                    "Travel:  " + region.DisplayName + "  (level " + region.RecommendedLevel + ")",
+                    new Color(0.82f, 0.88f, 0.94f),
+                    () =>
+                    {
+                        if (_game.TravelTo(id, out string error))
+                        {
+                            ShowStatus("Arrived in " + region.DisplayName + ".");
+                        }
+                        else
+                        {
+                            ShowStatus(error);
+                        }
+
+                        Rebuild();
+                    });
+
+                added++;
+            }
+        }
+
+        private static string DescribeAccess(AccessFailure failure)
+        {
+            switch (failure)
+            {
+                case AccessFailure.UnknownRegion: return "unknown";
+                case AccessFailure.ChapterIncomplete: return "closed for now";
+                case AccessFailure.NotConnected: return "no way there from here";
+                default: return "not yet";
+            }
         }
 
         private void AddSaveRows()
@@ -647,7 +732,8 @@ namespace Shadowbound.Game.Ui
             }
         }
 
-        private void ShowStatus(string message)
+        /// <summary>Shows a message on the menu. Public so the game can announce a region change.</summary>
+        public void ShowStatus(string message)
         {
             if (_status == null)
             {

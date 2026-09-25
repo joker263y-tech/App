@@ -16,7 +16,7 @@ combat, semi-open world, story-driven PvE.
 | Area | State |
 | --- | --- |
 | Repository + Unity 6 project scaffolding | Done |
-| Pure-C# game-logic core (combat, AI, items, quests, world, saves) | **Done — 536 tests passing** |
+| Pure-C# game-logic core (combat, AI, items, quests, world, saves) | **Done — 546 tests passing** |
 | Headless encounter + session integration | Done, tested |
 | Authored content (creatures, items, quests, chapters, regions) | Done — validated by a tested validator |
 | Unity layer (input, camera, views, HUD, menu, saves) | **Type-checks against real Unity assemblies** — never executed |
@@ -37,11 +37,13 @@ declared as both a field and a method, and a property shadowing
 `System.IO.Directory`.
 
 An audit against the standard "is the runtime path actually connected?" found
-three things that were fully built, fully tested, and **completely unreachable
-while playing**: quest rewards were never granted (so the story could not advance
-past its first quest), no item could ever be equipped, and the menu was
-keyboard-only on a platform with no keyboard. All three are fixed; the audit is
-written up in `Documentation/Verification.md`.
+four things that were fully built, fully tested, and **completely unreachable
+while playing**: quest rewards were never granted and the story could not advance
+past its first quest; no item could ever be equipped; the world's regions could
+not be travelled to at all, so two quest objectives were in places the player
+could not go; and the menu was keyboard-only on a platform with no keyboard. All
+four are fixed, and the audit that found them — including two further defects the
+travel tests then exposed — is written up in `Documentation/Verification.md`.
 
 **Nothing has been executed, seen, or installed.** There is no Unity in the
 environment this was built in. No APK exists. Nothing visual has been rendered,
@@ -53,14 +55,14 @@ lists the defects each check caught. Read it before trusting anything here.
 ### Three commands to check what can be checked
 
 ```bash
-bash Tools/test-core.sh         # purity gate + 536 tests
+bash Tools/test-core.sh         # purity gate + 546 tests
 bash Tools/check-syntax.sh      # every C# file parses at C# 9
 bash Tools/check-unity-layer.sh # Game assembly type-checks against Unity
 ```
 
 ```
 check-core-purity: OK (core is engine-free)
-Passed!  - Failed: 0, Passed: 536, Skipped: 0, Total: 536
+Passed!  - Failed: 0, Passed: 546, Skipped: 0, Total: 546
 check-syntax: OK (46 files parse as C# 9, no syntax errors)
 Build succeeded.  0 Warning(s)  0 Error(s)
 ```

@@ -10,7 +10,7 @@ claim as "the game works", and the difference matters.
 | --- | --- | --- |
 | Core purity gate | `bash Tools/check-core-purity.sh` | Pass — core is engine-free |
 | Core compiles under Unity's constraints | `bash Tools/test-core.sh` | Pass — netstandard2.1, C# 9, 0 warnings |
-| Core test suite | `bash Tools/test-core.sh` | **536 passed, 0 failed** |
+| Core test suite | `bash Tools/test-core.sh` | **546 passed, 0 failed** |
 | Every C# file parses at C# 9 | `bash Tools/check-syntax.sh` | Pass — 47 files, no syntax errors |
 | **Unity layer type-checks against real Unity assemblies** | `bash Tools/check-unity-layer.sh` | Pass — **0 errors, 0 warnings** |
 
@@ -111,6 +111,33 @@ that is always first - a menu you can open but not close is worse than no menu.
 
 This one was caught while writing the code rather than by the audit, which is the
 argument for asking the question of every change rather than once.
+
+### 4. The world graph was decorative, and the story was still unfinishable
+
+Two quests ask the player to reach a named region, and **there was no way to
+travel between regions at all**. The region graph, its connections, its chapter
+gates and its loot tables were all authored, populated and tested - and none of
+it existed in the running game. Fixing the quest chain alone would not have made
+the story completable, because the third quest's objective was in a place the
+player could not go.
+
+Implementing travel exposed two more problems, both found by tests written for
+the purpose:
+
+- `WorldGraph.CanEnter` enforces the **chapter gate only** and knows nothing
+  about where the player is standing. Navigating by it alone would have let the
+  player walk from the camp straight into the final sanctum, making every
+  connection in the map meaningless. The rule now lives in
+  `GameSession.CanTravelTo`: the gate must be open *and* the destination must be
+  next door or already visited.
+- The starting region was assigned directly by the content rather than entered, so
+  it was never marked discovered - meaning the player could never fast-travel back
+  to the hub they began in. Setting `RegionId` now records the discovery, so
+  "being somewhere you have never been" is not a state that can exist.
+
+The route the story requires is now asserted step by step in
+`RegionTravelTests.TheStorysRequiredRegions_AreReachableInOrder`, so a future
+change to a region's gate cannot silently strand the story again.
 
 ### Content validation moved into the tested core
 

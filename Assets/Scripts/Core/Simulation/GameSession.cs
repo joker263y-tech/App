@@ -106,8 +106,30 @@ namespace Shadowbound.Core.Simulation
 
         public string DifficultyId { get; set; } = "wanderer";
 
-        /// <summary>Region the player is currently in.</summary>
-        public string RegionId { get; set; } = "";
+        private string _regionId = "";
+
+        /// <summary>
+        /// Region the player is currently in.
+        ///
+        /// Setting it also records the region as discovered. Being somewhere you have
+        /// never been is not a state that should be able to exist, and the starting
+        /// region is set directly by the content rather than by entering it - so
+        /// without this the camp was never marked visited and the player could never
+        /// fast-travel back to the place they began.
+        /// </summary>
+        public string RegionId
+        {
+            get { return _regionId; }
+            set
+            {
+                _regionId = value;
+
+                if (!string.IsNullOrEmpty(value) && !DiscoveredRegions.Contains(value))
+                {
+                    DiscoveredRegions.Add(value);
+                }
+            }
+        }
 
         public List<string> DiscoveredRegions { get; private set; } = new List<string>();
 
@@ -550,6 +572,65 @@ namespace Shadowbound.Core.Simulation
             get { return Encounter.HostilesRemaining <= 0; }
         }
 
+        /// <summary>
+        /// Whether the player may move to a region from where they currently are.
+        ///
+        /// <see cref="WorldGraph.CanEnter"/> answers a narrower question - is the
+        /// chapter gate open - and deliberately knows nothing about where the player
+        /// is standing. A caller that only asked that would let the player step from
+        /// the camp straight into the final sanctum, and the whole region graph would
+        /// be decorative.
+        ///
+        /// So the rule is: the chapter gate must be open, AND the destination must be
+        /// either next door or somewhere already visited. Next door keeps the world
+        /// connected; already-visited is fast travel, which is what makes returning to
+        /// the camp and re-running an area reasonable rather than a walk.
+        /// </summary>
+        public bool CanTravelTo(string regionId, out AccessFailure failure)
+        {
+            failure = World.CanEnter(regionId, Chapters);
+
+            if (failure != AccessFailure.None)
+            {
+                return false;
+            }
+
+            if (string.IsNullOrEmpty(regionId) ||
+                string.Equals(regionId, RegionId, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            IReadOnlyList<string> neighbours = World.Neighbours(RegionId);
+
+            for (int i = 0; i < neighbours.Count; i++)
+            {
+                if (string.Equals(neighbours[i], regionId, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            if (DiscoveredRegions.Contains(regionId))
+            {
+                return true;
+            }
+
+            failure = AccessFailure.NotConnected;
+            return false;
+        }
+
+        /// <summary>Moves the player to a region, applying the travel rule. Reports why not on failure.</summary>
+        public bool TryTravelTo(string regionId, out AccessFailure failure)
+        {
+            if (!CanTravelTo(regionId, out failure))
+            {
+                return false;
+            }
+
+            return EnterRegion(regionId);
+        }
+
         /// <summary>Records that the player has reached a region, and reports it to quests.</summary>
         public bool EnterRegion(string regionId)
         {
@@ -559,12 +640,9 @@ namespace Shadowbound.Core.Simulation
                 return false;
             }
 
+            // The setter records the discovery, so being here and having been here
+            // cannot disagree.
             RegionId = regionId;
-
-            if (!DiscoveredRegions.Contains(regionId))
-            {
-                DiscoveredRegions.Add(regionId);
-            }
 
             Quests.Report(QuestEvent.Reach(regionId));
             Chapters.Refresh();
@@ -619,7 +697,6 @@ namespace Shadowbound.Core.Simulation
             ProfileName = save.ProfileName;
             DifficultyId = save.DifficultyId;
             PlaytimeSeconds = save.PlaytimeSeconds;
-            RegionId = save.RegionId;
 
             Player.SetPosition(save.Position);
             Player.SetFacing(save.FacingDegrees);
@@ -632,6 +709,10 @@ namespace Shadowbound.Core.Simulation
             DiscoveredRegions = save.DiscoveredRegions == null
                 ? new List<string>()
                 : new List<string>(save.DiscoveredRegions);
+
+            // Set after the list is replaced, not before: assigning the region marks it
+            // discovered, and doing that first would have it wiped by the line above.
+            RegionId = save.RegionId;
 
             // The generator is restored exactly, so subsequent loot and combat
             // rolls continue the sequence rather than restarting it. Restoring it

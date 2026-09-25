@@ -92,6 +92,21 @@ almost empty and nothing can drift out of sync with the code.
 Movement is camera-relative: forward moves the Warden away from the camera, not
 along a fixed world axis.
 
+### Getting around
+
+The game opens in the Last Ember Camp, which is a safe hub with nothing to fight.
+The opening quest asks you to reach the Grey Wilds, and there are two ways out:
+
+- **Walk into the gate** at the far end of the arena. It leads to the first
+  neighbouring region the world graph will allow, preferring somewhere new over
+  the way you came.
+- **Use the menu's The World section** to travel to any region that is next door
+  or that you have already visited, provided its chapter gate is open.
+
+Both paths apply the same rule, and it lives in the tested core rather than in
+the menu. Travelling replaces the region's creatures but keeps your character:
+level, bag, equipment and health all come with you.
+
 ### Touch (Android)
 
 | Control | Action |
@@ -141,6 +156,7 @@ The world freezes while it is open, so nothing swings at you while you read it.
 | Section | What it does |
 | --- | --- |
 | **Resume** | Closes the menu and unfreezes the world. Always the first row. |
+| **The World** | Lists every region. Places you can go are tappable; places you cannot are greyed out with the reason, so a story gate is visible rather than looking like a bug. |
 | **Equipped** | Shows each slot and what is in it. Tapping one takes the item off and returns it to the bag. |
 | **Carried** | Lists equippable items in the bag with their stat bonuses, so the choice is not blind. Tapping wears one. |
 | **Saves** | Lists save slots with the profile, level and playtime. Tapping loads; the trailing `[delete]` wording on a slot marks it as loadable. The last row saves to the current slot. |

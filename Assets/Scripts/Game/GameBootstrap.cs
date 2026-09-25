@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Shadowbound.Core.Combat;
 using Shadowbound.Core.Content;
@@ -6,6 +7,7 @@ using Shadowbound.Core.Progression;
 using Shadowbound.Core.Randomness;
 using Shadowbound.Core.Serialization;
 using Shadowbound.Core.Simulation;
+using Shadowbound.Core.World;
 using Shadowbound.Game.Combat;
 using Shadowbound.Game.Player;
 using Shadowbound.Game.Save;
@@ -55,25 +57,84 @@ namespace Shadowbound.Game
             public int Level;
         }
 
-        private static readonly SpawnPlanEntry[] SpawnPlan =
+        /// <summary>
+        /// What lives in the Grey Wilds: the first place the player is sent.
+        ///
+        /// Close and easy, in view from the start so the first fight happens without
+        /// the player having to go looking for it.
+        /// </summary>
+        private static readonly SpawnPlanEntry[] WildsSpawnPlan =
         {
-            // Close, easy, and in view from the start so the first fight happens
-            // without the player having to go looking for it.
             new SpawnPlanEntry { Archetype = GameContent.ArchetypeHollowWalker, X = 8f, Z = 12f, Level = 1 },
             new SpawnPlanEntry { Archetype = GameContent.ArchetypeHollowWalker, X = -9f, Z = 14f, Level = 1 },
             new SpawnPlanEntry { Archetype = GameContent.ArchetypeHollowWalker, X = 0f, Z = 18f, Level = 2 },
 
             // Mid field. Cinder Hounds are fast and set things on fire.
             new SpawnPlanEntry { Archetype = GameContent.ArchetypeCinderHound, X = 14f, Z = -6f, Level = 3 },
-            new SpawnPlanEntry { Archetype = GameContent.ArchetypeCinderHound, X = -14f, Z = -8f, Level = 3 },
-
-            // The elites, guarding the far end.
-            new SpawnPlanEntry { Archetype = GameContent.ArchetypeVeilwarden, X = 10f, Z = -24f, Level = 6 },
-            new SpawnPlanEntry { Archetype = GameContent.ArchetypeVeilwarden, X = -10f, Z = -24f, Level = 6 },
-
-            // The chapter boss.
-            new SpawnPlanEntry { Archetype = GameContent.ArchetypeAshenSentinel, X = 0f, Z = -33f, Level = 10 }
+            new SpawnPlanEntry { Archetype = GameContent.ArchetypeCinderHound, X = -14f, Z = -8f, Level = 3 }
         };
+
+        /// <summary>
+        /// The Hollowed Ruins: the Veilwardens hold the far end, and they are the
+        /// source of the Veil Splinters the third quest asks for.
+        /// </summary>
+        private static readonly SpawnPlanEntry[] RuinsSpawnPlan =
+        {
+            new SpawnPlanEntry { Archetype = GameContent.ArchetypeHollowWalker, X = 6f, Z = 20f, Level = 4 },
+            new SpawnPlanEntry { Archetype = GameContent.ArchetypeHollowWalker, X = -6f, Z = 20f, Level = 4 },
+
+            // The elites. Deliberately placed together, so pulling one draws both.
+            new SpawnPlanEntry { Archetype = GameContent.ArchetypeVeilwarden, X = 9f, Z = -20f, Level = 6 },
+            new SpawnPlanEntry { Archetype = GameContent.ArchetypeVeilwarden, X = -9f, Z = -20f, Level = 6 }
+        };
+
+        /// <summary>The Sunken Ward: everything that is left of the outpost's garrison.</summary>
+        private static readonly SpawnPlanEntry[] WardSpawnPlan =
+        {
+            new SpawnPlanEntry { Archetype = GameContent.ArchetypeCinderHound, X = 12f, Z = 8f, Level = 7 },
+            new SpawnPlanEntry { Archetype = GameContent.ArchetypeCinderHound, X = -12f, Z = 8f, Level = 7 },
+            new SpawnPlanEntry { Archetype = GameContent.ArchetypeVeilwarden, X = 0f, Z = -18f, Level = 8 }
+        };
+
+        /// <summary>The Umbral Sanctum: the boss, and nothing else. The walk to it is the point.</summary>
+        private static readonly SpawnPlanEntry[] SanctumSpawnPlan =
+        {
+            new SpawnPlanEntry { Archetype = GameContent.ArchetypeAshenSentinel, X = 0f, Z = -18f, Level = 10 }
+        };
+
+        /// <summary>
+        /// Regions with nothing to fight. The camp is a safe hub by design, and an
+        /// unknown region id gets this rather than whatever the wilds happen to hold -
+        /// spawning the wrong creatures in an unrecognised place would be worse than
+        /// spawning none.
+        /// </summary>
+        private static readonly SpawnPlanEntry[] EmptySpawnPlan = new SpawnPlanEntry[0];
+
+        /// <summary>What lives in a given region.</summary>
+        private static SpawnPlanEntry[] PlanFor(string regionId)
+        {
+            if (string.Equals(regionId, GameContent.RegionWilds, StringComparison.Ordinal))
+            {
+                return WildsSpawnPlan;
+            }
+
+            if (string.Equals(regionId, GameContent.RegionRuins, StringComparison.Ordinal))
+            {
+                return RuinsSpawnPlan;
+            }
+
+            if (string.Equals(regionId, GameContent.RegionWard, StringComparison.Ordinal))
+            {
+                return WardSpawnPlan;
+            }
+
+            if (string.Equals(regionId, GameContent.RegionSanctum, StringComparison.Ordinal))
+            {
+                return SanctumSpawnPlan;
+            }
+
+            return EmptySpawnPlan;
+        }
 
         public GameSession Session { get; private set; }
 
@@ -205,9 +266,29 @@ namespace Shadowbound.Game
                 return;
             }
 
-            for (int i = 0; i < SpawnPlan.Length; i++)
+            PopulateRegion(Session.Encounter, Session.RegionId, ViewPrefix());
+        }
+
+        /// <summary>
+        /// Adds a region's creatures to an encounter and creates their bodies.
+        ///
+        /// Takes the encounter as a parameter rather than using the session's current
+        /// one, because travelling builds the new encounter before the old one is
+        /// replaced - so for a moment there are two, and using the wrong one here would
+        /// spawn the new region's creatures into the region being left.
+        /// </summary>
+        private void PopulateRegion(EncounterSimulation encounter, string regionId, string idPrefix)
+        {
+            if (encounter == null)
             {
-                SpawnPlanEntry entry = SpawnPlan[i];
+                return;
+            }
+
+            SpawnPlanEntry[] plan = PlanFor(regionId);
+
+            for (int i = 0; i < plan.Length; i++)
+            {
+                SpawnPlanEntry entry = plan[i];
 
                 EnemyArchetype archetype = GameContent.FindArchetype(entry.Archetype);
                 if (archetype == null)
@@ -217,9 +298,9 @@ namespace Shadowbound.Game
                 }
 
                 var position = new Float3(entry.X, 0f, entry.Z);
-                Combatant combatant = archetype.Create(entry.Archetype + "-" + i, position, entry.Level);
+                Combatant combatant = archetype.Create(idPrefix + entry.Archetype + "-" + i, position, entry.Level);
 
-                Session.Encounter.AddEnemy(
+                encounter.AddEnemy(
                     combatant,
                     archetype.Abilities,
                     archetype.Brain,
@@ -230,6 +311,280 @@ namespace Shadowbound.Game
                     ResolveTint(archetype),
                     archetype.BodyScale,
                     archetype.IsBoss ? PrimitiveType.Cube : PrimitiveType.Capsule);
+            }
+        }
+
+        /// <summary>
+        /// A prefix that makes combatant ids unique per region.
+        ///
+        /// Enemy stream ids are derived from those ids, so reusing "hollow-walker-0" in
+        /// every region would make the second region's first walker behave identically
+        /// to the first region's - and re-entering a region would replay the same rolls.
+        /// </summary>
+        private string ViewPrefix()
+        {
+            return (Session == null ? string.Empty : Session.RegionId + "/");
+        }
+
+        // --------------------------------- travel ---------------------------------
+
+        /// <summary>
+        /// Moves the player to another region, if the world graph allows it.
+        ///
+        /// Travel replaces the whole encounter rather than editing it: the creature
+        /// list for the region being left has no meaning in the region being entered.
+        /// The player combatant itself survives, keeping its level, bag and health, so
+        /// travelling is not a reset.
+        /// </summary>
+        public bool TravelTo(string regionId, out string error)
+        {
+            error = null;
+
+            if (Session == null)
+            {
+                error = "There is no game in progress.";
+                return false;
+            }
+
+            // The travel rule lives in the session, not here: the chapter gate, the
+            // adjacency check and the fast-travel allowance are game rules, and rules
+            // that live in the view layer cannot be tested.
+            if (!Session.TryTravelTo(regionId, out AccessFailure failure))
+            {
+                error = DescribeAccess(failure);
+                return false;
+            }
+
+            ulong regionSeed = DeterministicRng.StableHash(regionId) ^ (ulong)Seed;
+
+            var encounter = new EncounterSimulation(
+                new DeterministicRng(regionSeed),
+                WorldBounds.Square(ArenaHalfExtent));
+
+            encounter.AddDriven(
+                Session.Player,
+                GameContent.BuildPlayerAbilities(),
+                InputDriver,
+                isPlayer: true);
+
+            // Order matters. The old region's bodies are removed first, and only then
+            // are the new ones created - clearing afterwards would destroy the very
+            // creatures just spawned, leaving an empty region.
+            ClearEnemyViews();
+            PopulateRegion(encounter, regionId, ViewPrefix());
+
+            Session.SetEncounter(encounter);
+
+            Arrive(Session.Player);
+
+            return true;
+        }
+
+        public bool TravelTo(string regionId)
+        {
+            return TravelTo(regionId, out _);
+        }
+
+        /// <summary>Places the player at the entry point for wherever they just arrived.</summary>
+        private void Arrive(Combatant player)
+        {
+            if (player == null)
+            {
+                return;
+            }
+
+            // Walked in from the south, so the region opens up ahead.
+            player.SetPosition(new Float3(0f, 0f, -(ArenaHalfExtent - 8f)));
+            player.FaceImmediately(new Float3(0f, 0f, 1f));
+
+            _viewsById.TryGetValue(player.Id, out CombatantView playerView);
+
+            if (playerView != null)
+            {
+                playerView.ClearFeedback();
+                playerView.Sync(0f);
+
+                if (CameraRig != null)
+                {
+                    CameraRig.SetTarget(playerView.transform, player);
+                }
+            }
+
+            // The gate is behind the player on arrival, so it must not fire again until
+            // they have stepped away and come back.
+            _gateArmed = false;
+        }
+
+        private static string DescribeAccess(AccessFailure failure)
+        {
+            switch (failure)
+            {
+                case AccessFailure.UnknownRegion:
+                    return "There is no such place.";
+
+                case AccessFailure.ChapterIncomplete:
+                    return "The way is closed for now. Whatever happens next has not happened yet.";
+
+                case AccessFailure.NotConnected:
+                    return "Nothing leads there from here.";
+
+                default:
+                    return "You cannot go there yet.";
+            }
+        }
+
+        /// <summary>
+        /// Destroys every body except the player's, ready for a new region.
+        ///
+        /// The player's view is kept because the player is the one thing that travels;
+        /// destroying and recreating it would reset the camera and lose hit feedback.
+        /// </summary>
+        private void ClearEnemyViews()
+        {
+            for (int i = _views.Count - 1; i >= 0; i--)
+            {
+                CombatantView view = _views[i];
+
+                if (view != null && view.Combatant != null &&
+                    ReferenceEquals(view.Combatant, Session.Player))
+                {
+                    continue;
+                }
+
+                if (view != null && view.Combatant != null)
+                {
+                    _viewsById.Remove(view.Combatant.Id);
+                }
+
+                _views.RemoveAt(i);
+
+                if (view != null && view.gameObject != null)
+                {
+                    Destroy(view.gameObject);
+                }
+            }
+
+            // Any corpse still waiting to be cleaned up belongs to the old region.
+            _deadViews.Clear();
+            _deadViewTimers.Clear();
+        }
+
+        /// <summary>
+        /// The gate that leads onward.
+        ///
+        /// A physical way out rather than only a menu entry, because exploring is one
+        /// of the things this game is supposed to be about. It is a plain marker for
+        /// now - real geometry replaces it - but the rule it enforces is the real one:
+        /// it offers the first neighbour the world graph will actually let you into.
+        /// </summary>
+        private void BuildGate(Transform parent)
+        {
+            GameObject gate = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            gate.name = "Gate";
+            gate.transform.SetParent(parent, false);
+            gate.transform.localPosition = new Vector3(0f, 1.6f, ArenaHalfExtent - 6f);
+            gate.transform.localScale = new Vector3(7f, 3.2f, 0.5f);
+
+            Collider collider = gate.GetComponent<Collider>();
+            if (collider != null)
+            {
+                Destroy(collider);
+            }
+
+            ApplyMaterial(gate, new Color(0.62f, 0.5f, 0.28f));
+        }
+
+        private bool _gateArmed = true;
+
+        private void CheckGate()
+        {
+            if (Session == null || Session.Player == null)
+            {
+                return;
+            }
+
+            Float3 position = Session.Player.Position;
+            float gateZ = ArenaHalfExtent - 6f;
+            float dx = position.X;
+            float dz = position.Z - gateZ;
+
+            if ((dx * dx) + (dz * dz) > 12.25f)
+            {
+                // Outside the pad, so the gate re-arms.
+                _gateArmed = true;
+                return;
+            }
+
+            if (!_gateArmed)
+            {
+                return;
+            }
+
+            string destination = NextRegionFrom(Session.RegionId);
+
+            if (destination == null)
+            {
+                return;
+            }
+
+            _gateArmed = false;
+
+            if (TravelTo(destination, out string error))
+            {
+                ShowMenuMessage("\u2014 " + destination + " \u2014");
+            }
+            else if (!string.IsNullOrEmpty(error))
+            {
+                Debug.Log("Shadowbound: the gate would not open. " + error);
+            }
+        }
+
+        /// <summary>
+        /// Where the gate leads: the first neighbouring region that is open to the
+        /// player, preferring anywhere other than back the way they came.
+        /// </summary>
+        private string NextRegionFrom(string regionId)
+        {
+            IReadOnlyList<string> neighbours = Session.World.Neighbours(regionId);
+            string fallback = null;
+
+            for (int i = 0; i < neighbours.Count; i++)
+            {
+                string neighbour = neighbours[i];
+
+                if (string.IsNullOrEmpty(neighbour) ||
+                    string.Equals(neighbour, regionId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (Session.World.CanEnter(neighbour, Session.Chapters) != AccessFailure.None)
+                {
+                    continue;
+                }
+
+                // A neighbour is by definition adjacent, so the session's travel rule
+                // will allow it unless the chapter gate is shut - which is checked above.
+
+                if (!string.Equals(neighbour, GameContent.RegionCamp, StringComparison.Ordinal))
+                {
+                    return neighbour;
+                }
+
+                if (fallback == null)
+                {
+                    fallback = neighbour;
+                }
+            }
+
+            return fallback;
+        }
+
+        private void ShowMenuMessage(string message)
+        {
+            if (Menu != null)
+            {
+                Menu.ShowStatus(message);
             }
         }
 
@@ -349,6 +704,7 @@ namespace Shadowbound.Game
             CreateBlock(arena.transform, "Pillar 4", new Vector3(-4f, 1.5f, -14f), new Vector3(2.2f, 3f, 2.2f));
 
             EnsureKeyLight(arena.transform);
+            BuildGate(arena.transform);
 
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.Linear;
@@ -513,6 +869,7 @@ namespace Shadowbound.Game
 
                 SyncViews(deltaTime);
                 ExpireDeadViews(deltaTime);
+                CheckGate();
                 TickAutoSave(deltaTime);
             }
 
