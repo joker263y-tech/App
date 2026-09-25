@@ -219,12 +219,15 @@ jobs:
           VERSION="${{ steps.unity_version.outputs.version }}"
 
           # unityci/editor tags look like: <version>-base-<n> or
-          # ubuntu-<version>-base-<n> depending on age. Ask Docker Hub for
-          # anything containing our version + "base" and take the newest.
+          # ubuntu-<version>-base-<n> depending on age, but also come in
+          # windows- and mac- variants. This job runs on an ubuntu-latest
+          # runner, so we MUST exclude windows/mac tags - Docker on Linux
+          # cannot run a Windows container image at all.
           TAG=$(curl -fsSL "https://hub.docker.com/v2/repositories/unityci/editor/tags?page_size=100&name=${VERSION}" \
             | jq -r '.results[].name' \
             | grep -F "$VERSION" \
             | grep -i 'base' \
+            | grep -viE '^(windows|mac)-' \
             | sort -V \
             | tail -n1)
 
