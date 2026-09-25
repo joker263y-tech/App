@@ -10,24 +10,33 @@
 
 The test suite needs no Unity. Unity needs no .NET SDK. They are independent.
 
-## 1. Run the tests (no Unity required)
+## 1. Run the checks (no Unity required)
 
 ```bash
-bash Tools/test-core.sh
+bash Tools/test-core.sh          # purity gate, compile, 511 tests
+bash Tools/check-syntax.sh       # every C# file parses at C# 9
+bash Tools/check-unity-layer.sh  # Game assembly type-checks against Unity
 ```
 
-Runs the purity gate, compiles the core against `netstandard2.1` with C# 9 —
-Unity 6's exact constraints — and executes the xUnit suite.
+`test-core.sh` runs the purity gate, compiles the core against `netstandard2.1`
+with C# 9 — Unity 6's exact constraints — and executes the xUnit suite.
+
+`check-unity-layer.sh` type-checks the Game assembly against real Unity
+reference assemblies, which is how the runtime path is verified to compile
+without opening Unity. It needs network access on the first run, to restore
+those reference assemblies.
 
 Expected output:
 
 ```
 check-core-purity: OK (core is engine-free)
 Build succeeded.  0 Warning(s)  0 Error(s)
-Passed!  - Failed: 0, Passed: 482, Skipped: 0, Total: 482
+Passed!  - Failed: 0, Passed: 511, Skipped: 0, Total: 511
+check-syntax: OK (46 files parse as C# 9, no syntax errors)
+Build succeeded.  0 Warning(s)  0 Error(s)
 ```
 
-Or directly:
+Individually:
 
 ```bash
 dotnet test Tests/Shadowbound.Core.Tests

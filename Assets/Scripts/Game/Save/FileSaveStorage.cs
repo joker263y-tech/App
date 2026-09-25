@@ -29,7 +29,9 @@ namespace Shadowbound.Game.Save
             _directory = Path.Combine(Application.persistentDataPath, subdirectory);
         }
 
-        public string Directory
+        /// <summary>Where slot files are written. Named to avoid shadowing
+        /// System.IO.Directory, which this class also uses.</summary>
+        public string DirectoryPath
         {
             get { return _directory; }
         }
@@ -69,7 +71,7 @@ namespace Shadowbound.Game.Save
                 throw new ArgumentException("A save slot needs an id.", nameof(slotId));
             }
 
-            Directory.CreateDirectory(_directory);
+            System.IO.Directory.CreateDirectory(_directory);
 
             string path = PathFor(slotId);
             string temporary = path + TempExtension;
@@ -136,14 +138,14 @@ namespace Shadowbound.Game.Save
         {
             var slots = new List<string>();
 
-            if (!Directory.Exists(_directory))
+            if (!System.IO.Directory.Exists(_directory))
             {
                 return slots;
             }
 
             try
             {
-                string[] files = Directory.GetFiles(_directory, "*" + Extension);
+                string[] files = System.IO.Directory.GetFiles(_directory, "*" + Extension);
 
                 for (int i = 0; i < files.Length; i++)
                 {

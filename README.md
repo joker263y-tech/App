@@ -16,37 +16,45 @@ combat, semi-open world, story-driven PvE.
 | Area | State |
 | --- | --- |
 | Repository + Unity 6 project scaffolding | Done |
-| Pure-C# game-logic core (combat, AI, items, quests, world, saves) | **Done — 482 tests passing** |
+| Pure-C# game-logic core (combat, AI, items, quests, world, saves) | **Done — 511 tests passing** |
 | Headless encounter + session integration | Done, tested |
-| Authored content (creatures, items, quests, chapters, regions) | Done, validated |
-| Unity layer (input, camera, views, HUD, saves) | Written — **not yet compiled** |
-| Editor tooling (scene setup, Android config, content validation) | Written — **not yet compiled** |
+| Authored content (creatures, items, quests, chapters, regions) | Done — validated by a tested validator |
+| Unity layer (input, camera, views, HUD, saves) | **Type-checks against real Unity assemblies** — never executed |
+| Editor tooling (scene setup, Android config) | Written — **not compiled** (no UnityEditor reference assembly) |
 | Android APK | **Not produced** — requires Unity with the Android module |
 
 ### Read this before assuming it works
 
 The **game rules are verified by execution**: `Tools/test-core.sh` compiles the
-real core sources under Unity 6's exact constraints and runs 482 tests against
+real core sources under Unity 6's exact constraints and runs 511 tests against
 them. That part is not a claim, it is an observation.
 
-The **Unity layer has never been compiled or run.** There is no Unity
-installation in the environment this was built in, so the presentation layer was
-written and then cross-checked by hand against the core's actual API surface. No
-APK exists. Nothing visual has been seen.
+The **Game assembly is verified to compile**, against real Unity reference
+assemblies, with 0 errors and 0 warnings. Type-checking it for the first time
+immediately found two genuine compile errors a hand review had missed — a member
+declared as both a field and a method, and a property shadowing
+`System.IO.Directory`.
 
-`Documentation/Verification.md` states exactly what was run, what was not, and
-which defects the hand-check caught. Read it before trusting anything here.
+**Nothing has been executed, seen, or installed.** There is no Unity in the
+environment this was built in. No APK exists. Nothing visual has been rendered,
+and the Editor assembly has not been compiled at all.
 
-### One command to check what can be checked
+`Documentation/Verification.md` states exactly what was run and what was not, and
+lists the defects each check caught. Read it before trusting anything here.
+
+### Three commands to check what can be checked
 
 ```bash
-bash Tools/test-core.sh
+bash Tools/test-core.sh         # purity gate + 511 tests
+bash Tools/check-syntax.sh      # every C# file parses at C# 9
+bash Tools/check-unity-layer.sh # Game assembly type-checks against Unity
 ```
 
 ```
 check-core-purity: OK (core is engine-free)
+Passed!  - Failed: 0, Passed: 511, Skipped: 0, Total: 511
+check-syntax: OK (46 files parse as C# 9, no syntax errors)
 Build succeeded.  0 Warning(s)  0 Error(s)
-Passed!  - Failed: 0, Passed: 482, Skipped: 0, Total: 482
 ```
 
 ---
@@ -55,7 +63,9 @@ Passed!  - Failed: 0, Passed: 482, Skipped: 0, Total: 482
 
 ```bash
 # 1. Verify everything that can be verified without an engine.
-bash Tools/test-core.sh
+bash Tools/test-core.sh            # core: purity, Unity constraints, 511 tests
+bash Tools/check-syntax.sh         # all C# parses at Unity's language level
+bash Tools/check-unity-layer.sh    # Game assembly type-checks against Unity
 ```
 
 ```
@@ -127,7 +137,7 @@ Assets/
 Packages/              Unity package manifest (URP, Input System, UGUI)
 ProjectSettings/       Unity project configuration
 Tools/                 command-line verification scripts
-Tests/                 .NET test projects compiling the real core sources
+Tests/                 .NET projects: core tests, plus a Unity-layer type-check
 Documentation/         architecture, design, building, verification status
 Builds/                APK output (git-ignored)
 ```

@@ -1,11 +1,6 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using Shadowbound.Core.Content;
-using Shadowbound.Core.Items;
-using Shadowbound.Core.Quests;
-using Shadowbound.Core.Serialization;
-using Shadowbound.Core.World;
 using Shadowbound.Game;
 using UnityEditor;
 using UnityEditor.Build;
@@ -130,128 +125,57 @@ namespace Shadowbound.Editor
             Debug.Log("Shadowbound: Android player settings configured (IL2CPP, ARM64, Vulkan + GLES3, landscape).");
         }
 
+        /// <summary>
+        /// Runs the core's content validator and reports the result.
+        ///
+        /// The checking itself lives in Shadowbound.Core.ContentValidator rather
+        /// than here, which matters for two reasons: it is ordinary data logic with
+        /// no engine dependency, and keeping it in the core means it is covered by
+        /// the test suite - so the validator is proven to catch the mistakes it
+        /// claims to, and not merely to return a clean bill of health.
+        ///
+        /// This method is only the reporting.
+        /// </summary>
         [MenuItem("Shadowbound/Validate Content", false, 22)]
         public static void ValidateContent()
         {
-            int problems = 0;
+            ContentReport report;
 
             try
             {
-                ItemDatabase items = GameContent.BuildItems();
-                List<QuestDefinition> quests = GameContent.BuildQuests();
-                List<ChapterDefinition> chapters = GameContent.BuildChapters();
-                List<RegionDefinition> regions = GameContent.BuildRegions();
-                Dictionary<string, LootTable> loot = GameContent.BuildLootTables();
-                List<EnemyArchetype> archetypes = GameContent.BuildEnemyArchetypes();
-
-                // Cross-reference checks. Each of these catches an authoring mistake
-                // that would otherwise only show up as a silent no-op at runtime:
-                // a loot entry naming a missing item, or a quest naming a creature
-                // that is never spawned.
-                foreach (KeyValuePair<string, LootTable> entry in loot)
-                {
-                    problems += CheckLootTable(entry.Value, items);
-                }
-
-                for (int i = 0; i < archetypes.Count; i++)
-                {
-                    EnemyArchetype archetype = archetypes[i];
-
-                    if (archetype.Abilities == null || archetype.Abilities.Count == 0)
-                    {
-                        Debug.LogWarning("Shadowbound: archetype '" + archetype.Id + "' has no abilities.");
-                        problems++;
-                    }
-                    else if (archetype.AttackAbilityIndex < 0 ||
-                             archetype.AttackAbilityIndex >= archetype.Abilities.Count)
-                    {
-                        Debug.LogError(
-                            "Shadowbound: archetype '" + archetype.Id + "' attacks with ability index " +
-                            archetype.AttackAbilityIndex + " but only has " + archetype.Abilities.Count + ".");
-                        problems++;
-                    }
-
-                    if (!string.IsNullOrEmpty(archetype.LootTableId) && !loot.ContainsKey(archetype.LootTableId))
-                    {
-                        Debug.LogError(
-                            "Shadowbound: archetype '" + archetype.Id + "' points at loot table '" +
-                            archetype.LootTableId + "', which does not exist.");
-                        problems++;
-                    }
-                }
-
-                Debug.Log(
-                    "Shadowbound content: " + items.Count + " items, " + archetypes.Count + " archetypes, " +
-                    loot.Count + " loot tables, " + quests.Count + " quests, " + chapters.Count +
-                    " chapters, " + regions.Count + " regions. " +
-                    (problems == 0 ? "No problems found." : problems + " problem(s) found."));
+                report = ContentValidator.ValidateShippedContent();
             }
             catch (Exception exception)
             {
+                // Content that cannot even be constructed is the most serious case,
+                // so it is reported rather than allowed to surface as a stack trace.
                 Debug.LogError("Shadowbound: content failed to build: " + exception);
-                problems++;
+                return;
             }
 
-            if (problems > 0)
+            for (int i = 0; i < report.Problems.Count; i++)
             {
-                Debug.LogWarning("Shadowbound: content validation finished with " + problems + " problem(s).");
-            }
-        }
+                ContentProblem problem = report.Problems[i];
+                string line = "Shadowbound content: " + problem;
 
-        private static int CheckLootTable(LootTable table, ItemDatabase items)
-        {
-            int problems = 0;
-
-            problems += CheckLootEntries(table, table.Guaranteed, "guaranteed", items);
-            problems += CheckLootEntries(table, table.Weighted, "weighted", items);
-
-            if (table.Guaranteed.Length == 0 && table.Weighted.Length == 0)
-            {
-                Debug.LogWarning("Shadowbound: loot table '" + table.Id + "' cannot drop anything.");
-                problems++;
-            }
-
-            return problems;
-        }
-
-        private static int CheckLootEntries(
-            LootTable table,
-            LootEntry[] entries,
-            string group,
-            ItemDatabase items)
-        {
-            int problems = 0;
-
-            for (int i = 0; i < entries.Length; i++)
-            {
-                LootEntry entry = entries[i];
-
-                if (string.IsNullOrEmpty(entry.ItemId))
+                if (problem.Severity == ContentProblemSeverity.Error)
                 {
-                    Debug.LogWarning(
-                        "Shadowbound: loot table '" + table.Id + "' has a " + group + " entry with no item id.");
-                    problems++;
-                    continue;
+                    Debug.LogError(line);
                 }
-
-                if (!items.TryGet(entry.ItemId, out _))
+                else
                 {
-                    Debug.LogError(
-                        "Shadowbound: loot table '" + table.Id + "' can drop '" + entry.ItemId +
-                        "', which is not a registered item. The drop would silently yield nothing.");
-                    problems++;
-                }
-
-                if (entry.MinQuantity < 1 || entry.MaxQuantity < entry.MinQuantity)
-                {
-                    Debug.LogError(
-                        "Shadowbound: loot table '" + table.Id + "' has an invalid quantity range for '" +
-                        entry.ItemId + "' (" + entry.MinQuantity + ".." + entry.MaxQuantity + ").");
-                    problems++;
+                    Debug.LogWarning(line);
                 }
             }
 
-            return problems;
+            if (report.IsClean)
+            {
+                Debug.Log("Shadowbound content: " + report.Summary());
+            }
+            else
+            {
+                Debug.LogError("Shadowbound content: " + report.Summary());
+            }
         }
 
         [MenuItem("Shadowbound/Build Android APK", false, 40)]

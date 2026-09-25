@@ -115,7 +115,7 @@ namespace Shadowbound.Game
             BuildArena();
             BuildPlayer();
             BuildEnemies();
-            BuildHud();
+            AttachHud();
 
             if (LoadSaveOnStart)
             {
@@ -334,17 +334,7 @@ namespace Shadowbound.Game
             CreateBlock(arena.transform, "Pillar 3", new Vector3(3f, 1.5f, -12f), new Vector3(2.2f, 3f, 2.2f));
             CreateBlock(arena.transform, "Pillar 4", new Vector3(-4f, 1.5f, -14f), new Vector3(2.2f, 3f, 2.2f));
 
-            if (FindLight() == null)
-            {
-                GameObject lightObject = new GameObject("Key Light");
-                lightObject.transform.SetParent(arena.transform, false);
-                lightObject.transform.rotation = Quaternion.Euler(48f, 145f, 0f);
-
-                Light light = lightObject.AddComponent<Light>();
-                light.type = LightType.Directional;
-                light.intensity = 0.85f;
-                light.color = new Color(0.86f, 0.88f, 1f);
-            }
+            EnsureKeyLight(arena.transform);
 
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.Linear;
@@ -355,9 +345,32 @@ namespace Shadowbound.Game
             RenderSettings.ambientLight = new Color(0.16f, 0.17f, 0.22f);
         }
 
-        private static Light FindLight()
+        /// <summary>
+        /// Makes sure the arena has a directional light, and registers it as the
+        /// scene's sun.
+        ///
+        /// RenderSettings.sun is the engine's own notion of "the directional light",
+        /// so it doubles as a way to notice one that already exists - which is why
+        /// this does not need a global object search. It also means the light that
+        /// gets created is properly registered rather than merely present.
+        /// </summary>
+        private static void EnsureKeyLight(Transform parent)
         {
-            return Object.FindFirstObjectByType<Light>();
+            if (RenderSettings.sun != null)
+            {
+                return;
+            }
+
+            GameObject lightObject = new GameObject("Key Light");
+            lightObject.transform.SetParent(parent, false);
+            lightObject.transform.rotation = Quaternion.Euler(48f, 145f, 0f);
+
+            Light light = lightObject.AddComponent<Light>();
+            light.type = LightType.Directional;
+            light.intensity = 0.85f;
+            light.color = new Color(0.86f, 0.88f, 1f);
+
+            RenderSettings.sun = light;
         }
 
         private void CreateBlock(Transform parent, string blockName, Vector3 localPosition, Vector3 size)
@@ -444,7 +457,7 @@ namespace Shadowbound.Game
             return material;
         }
 
-        private void BuildHud()
+        private void AttachHud()
         {
             if (!BuildHud)
             {
