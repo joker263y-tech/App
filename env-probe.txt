@@ -1,0 +1,1 @@
+environment probe: if this file exists, the project filesystem is writable and work can resume.
