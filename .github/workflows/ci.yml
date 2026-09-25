@@ -1,3 +1,40 @@
+# =============================================================================
+# SHADOWBOUND: THE LAST NIGHT - continuous integration
+# =============================================================================
+#
+# Four jobs in one file:
+#
+#   verify              - the three verification gates. No Unity anywhere,
+#                          runs in about a minute, on every push and pull
+#                          request. Same path documented in
+#                          Documentation/Verification.md.
+#
+#   license-check        - checks whether UNITY_LICENSE / UNITY_SERIAL secrets
+#                          exist yet, so the android job can skip cleanly
+#                          instead of failing until they're configured.
+#
+#   android              - builds the real APK with Unity inside game-ci's
+#                          container. Costs a Unity license and 15-40 minutes
+#                          per run, so it only runs on pushes to main (and
+#                          manual dispatch), and only once license secrets
+#                          are configured.
+#
+#   generate-activation-file - a ONE-TIME bootstrap job, NOT part of normal
+#                          CI. It never runs on push/PR. You trigger it
+#                          manually (workflow_dispatch, with the
+#                          "generate_activation_file" input set to true) to
+#                          get the first UNITY_LICENSE value when you don't
+#                          own a PC and can't run Unity Hub's GUI. See the
+#                          big comment on that job below for the full flow.
+#
+# Required repository secrets for the android job (see Documentation/Building.md):
+#
+#   Personal licence:      UNITY_LICENSE (the .ulf licence file contents),
+#                          UNITY_EMAIL, UNITY_PASSWORD
+#   Professional licence:  UNITY_SERIAL, UNITY_EMAIL, UNITY_PASSWORD
+#
+# =============================================================================
+
 name: CI
 
 on:
@@ -5,109 +42,99 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      generate_activation_file:
+        description: >-
+          Run ONLY the Unity activation-file bootstrap job instead of normal
+          CI (use this once, to get your first UNITY_LICENSE secret).
+        type: boolean
+        default: false
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Normal CI - skipped entirely on an activation-file-only manual run.
+  # ---------------------------------------------------------------------------
+
   verify:
     name: Verify (core tests, syntax, Unity layer)
     runs-on: ubuntu-latest
+    if: ${{ inputs.generate_activation_file != true }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup .NET 10
+      - name: Set up .NET SDK
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          # 10.0.x builds everything (it is what the project is developed with),
+          # but the test suite and the syntax gate target net9.0 and need the
+          # 9.0 runtime to actually RUN, not just compile.
+          dotnet-version: |
+            10.0.x
+            9.0.x
 
-      - name: Setup .NET 9
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '9.0.x'
-
-      - name: Core purity
+      - name: Core purity gate (core must stay engine-free)
         run: bash Tools/check-core-purity.sh
 
-      - name: Core tests
+      - name: Core build + test suite
         run: bash Tools/test-core.sh
 
-      - name: Syntax gate
+      - name: Syntax gate (every file parses at C# 9)
         run: bash Tools/check-syntax.sh
 
-      - name: Unity layer type-check
+      - name: Unity layer type-check (real Unity reference assemblies)
         run: bash Tools/check-unity-layer.sh
 
-  unity-activation:
-    name: Unity Personal Activation
-    runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
-
-    steps:
-      - name: Generate Unity activation request
-        id: activation
-        uses: game-ci/unity-request-activation-file@v2
-
-      - name: Upload Unity activation request
-        uses: actions/upload-artifact@v4
-        with:
-          name: Unity-Activation
-          path: ${{ steps.activation.outputs.filePath }}
-
   license-check:
-    name: Check Unity licence
+    name: Check for Unity licence secrets
     runs-on: ubuntu-latest
-    needs: unity-activation
-
+    needs: [verify]
+    if: ${{ inputs.generate_activation_file != true }}
     outputs:
       available: ${{ steps.check.outputs.available }}
 
     steps:
-      - name: Check licence secrets
+      - name: Check secrets
         id: check
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
-          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
-          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
           UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
         run: |
           if [ -n "$UNITY_LICENSE" ] || [ -n "$UNITY_SERIAL" ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
-            echo "Unity licence configuration found."
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::No Unity licence secrets configured - skipping the APK build."
+            echo "::notice::No Unity licence secrets configured - skipping the APK build. See Documentation/Building.md."
           fi
 
   android:
-    name: Build Android APK
+    name: Build Android APK (Unity)
     runs-on: ubuntu-latest
     needs: [verify, license-check]
 
-    if: >
+    # Only on pushes to main and manual runs - an APK per pull request is not
+    # worth 30 minutes of runner time. Never runs during an
+    # activation-file-only dispatch.
+    if: >-
+      inputs.generate_activation_file != true &&
       needs.license-check.outputs.available == 'true' &&
-      (
-        github.event_name == 'workflow_dispatch' ||
-        (
-          github.event_name == 'push' &&
-          github.ref == 'refs/heads/main'
-        )
-      )
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           lfs: true
 
-      - name: Cache Unity Library
+      - name: Cache the Unity Library folder
         uses: actions/cache@v4
         with:
           path: Library
-          key: Library-${{ runner.os }}-${{ hashFiles('ProjectSettings/ProjectVersion.txt') }}
+          key: Library-Shadowbound-Android-${{ hashFiles('Packages/manifest.json') }}
           restore-keys: |
-            Library-${{ runner.os }}-
+            Library-Shadowbound-Android-
+            Library-Shadowbound-
 
-      - name: Build Android
+      - name: Build the APK
         uses: game-ci/unity-builder@v4
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
@@ -118,10 +145,158 @@ jobs:
           targetPlatform: Android
           unityVersion: auto
           androidExportType: androidPackage
+          # Our own entry point: creates the scene, configures the Android
+          # player, validates the content (throwing on errors) and builds to
+          # build/Android/Shadowbound.apk where the artifact step finds it.
           buildMethod: Shadowbound.Editor.ProjectSetup.BuildAndroidFromCommandLine
 
-      - name: Upload APK
+      - name: Upload the APK
         uses: actions/upload-artifact@v4
         with:
           name: Shadowbound-APK
           path: build/Android/*.apk
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # One-time bootstrap job - only runs when you explicitly ask for it via
+  # workflow_dispatch with generate_activation_file = true. Everything else
+  # in this file ignores it.
+  #
+  # What it does:
+  #   1. Reads the exact Unity Editor version from
+  #      ProjectSettings/ProjectVersion.txt
+  #   2. Resolves a matching unityci/editor Docker image tag automatically
+  #   3. Runs that Unity Editor headlessly with -createManualActivationFile,
+  #      which produces a small *.alf request file (no license needed for
+  #      this step - it only REQUESTS one)
+  #   4. Uploads that *.alf file as a workflow artifact
+  #
+  # What YOU do after this job finishes (from your phone, no PC needed):
+  #   1. Actions tab -> this run -> download the "unity-activation-file"
+  #      artifact
+  #   2. Open https://license.unity3d.com/manual in your phone's browser
+  #   3. Log in with your Unity account, upload the .alf file, choose
+  #      "Unity Personal", answer the questions, download the .ulf file it
+  #      gives you back
+  #   4. From Termux:
+  #        gh secret set UNITY_LICENSE  < Unity_v<version>.ulf
+  #        gh secret set UNITY_EMAIL    --body "your-unity-account@email.com"
+  #        gh secret set UNITY_PASSWORD --body "your-unity-account-password"
+  #   5. Push to main (or run this workflow again with the input left at
+  #      false) - the android job will now find the secrets and build the
+  #      real APK.
+  #
+  # NOTE: this uses the same activation mechanism Unity Hub itself uses
+  # (-createManualActivationFile / https://license.unity3d.com/manual). It
+  # is not an official GameCI Action (the old one,
+  # unity-request-activation-file, was deprecated and always fails with
+  # "This action is no longer supported"), but it is the same manual flow
+  # GameCI's own docs still point to: https://game.ci/docs/github/activation
+  # ---------------------------------------------------------------------------
+
+  generate-activation-file:
+    name: Generate Unity activation request (.alf)
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.generate_activation_file == true }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the Unity Editor version this project uses
+        id: unity_version
+        run: |
+          VERSION=$(grep 'm_EditorVersion:' ProjectSettings/ProjectVersion.txt | awk '{print $2}')
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not read m_EditorVersion from ProjectSettings/ProjectVersion.txt"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Project Unity version: $VERSION"
+
+      - name: Resolve a matching unityci/editor image tag
+        id: tag
+        run: |
+          VERSION="${{ steps.unity_version.outputs.version }}"
+
+          # unityci/editor tags look like: <version>-base-<n> or
+          # ubuntu-<version>-base-<n> depending on age. Ask Docker Hub for
+          # anything containing our version + "base" and take the newest.
+          TAG=$(curl -fsSL "https://hub.docker.com/v2/repositories/unityci/editor/tags?page_size=100&name=${VERSION}" \
+            | jq -r '.results[].name' \
+            | grep -F "$VERSION" \
+            | grep -i 'base' \
+            | sort -V \
+            | tail -n1)
+
+          if [ -z "$TAG" ]; then
+            echo "::error::No unityci/editor image found for Unity $VERSION."
+            echo "::error::Check https://hub.docker.com/r/unityci/editor/tags manually,"
+            echo "::error::find the closest matching tag, and set it directly in this step."
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Resolved image: unityci/editor:$TAG"
+
+      - name: Run Unity headlessly to request an activation file
+        id: run_unity
+        run: |
+          IMAGE="unityci/editor:${{ steps.tag.outputs.tag }}"
+          docker pull "$IMAGE"
+
+          CID=$(docker create \
+            -v "$GITHUB_WORKSPACE:/project" \
+            -w /project \
+            "$IMAGE" \
+            unity-editor -batchmode -nographics -logFile - \
+              -createManualActivationFile -quit)
+
+          echo "container=$CID" >> "$GITHUB_OUTPUT"
+
+          # This exits non-zero by design once the .alf request is written -
+          # Unity treats "no license yet" as an error condition. That's fine.
+          docker start -a "$CID" || true
+
+      - name: Collect the generated .alf file
+        run: |
+          CID="${{ steps.run_unity.outputs.container }}"
+          mkdir -p ./activation-output
+
+          # We don't know in advance exactly where inside the container Unity
+          # wrote the file, so find every file the container added or changed
+          # and pull out anything that looks like an activation file.
+          docker diff "$CID" \
+            | awk '$1 == "A" || $1 == "C" {print $2}' \
+            | grep -i '\.alf$' > ./alf_paths.txt || true
+
+          if [ ! -s ./alf_paths.txt ]; then
+            echo "::error::No .alf file was produced. Check the previous step's log output."
+            docker rm "$CID" >/dev/null 2>&1 || true
+            exit 1
+          fi
+
+          while read -r p; do
+            docker cp "$CID:$p" "./activation-output/$(basename "$p")"
+          done < ./alf_paths.txt
+
+          docker rm "$CID" >/dev/null 2>&1 || true
+          ls -la ./activation-output
+
+      - name: Upload the activation file
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-activation-file
+          path: activation-output/*.alf
+          if-no-files-found: error
+
+      - name: Next steps
+        run: |
+          echo "## Next steps" >> "$GITHUB_STEP_SUMMARY"
+          echo "1. Download the **unity-activation-file** artifact above." >> "$GITHUB_STEP_SUMMARY"
+          echo "2. From your phone browser, open https://license.unity3d.com/manual" >> "$GITHUB_STEP_SUMMARY"
+          echo "3. Log in, upload the .alf file, choose **Unity Personal**, download the .ulf it gives back." >> "$GITHUB_STEP_SUMMARY"
+          echo "4. From Termux:" >> "$GITHUB_STEP_SUMMARY"
+          echo '   \`gh secret set UNITY_LICENSE < Unity_v${{ steps.unity_version.outputs.version }}.ulf\`' >> "$GITHUB_STEP_SUMMARY"
+          echo '   \`gh secret set UNITY_EMAIL --body "your-unity-account-email"\`' >> "$GITHUB_STEP_SUMMARY"
+          echo '   \`gh secret set UNITY_PASSWORD --body "your-unity-account-password"\`' >> "$GITHUB_STEP_SUMMARY"
+          echo "5. Push to main - the **android** job will now build the APK." >> "$GITHUB_STEP_SUMMARY"
