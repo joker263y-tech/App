@@ -1,155 +1,84 @@
-# =============================================================================
-# SHADOWBOUND: THE LAST NIGHT - continuous integration
-# =============================================================================
-#
-# Three jobs:
-#
-#   verify         - the three verification gates. No Unity anywhere, runs in
-#                     about a minute, on every push and pull request. Same
-#                     path documented in Documentation/Verification.md.
-#
-#   license-check   - checks whether Unity credentials exist yet, so the
-#                     android job can skip cleanly instead of failing until
-#                     they're configured.
-#
-#   android         - builds the real APK. Costs 15-40 minutes per run, so it
-#                     only runs on pushes to main (and manual dispatch), and
-#                     only once credentials are configured.
-#
-# ---------------------------------------------------------------------------
-# A NOTE ON LICENSING (read this if the android job ever breaks again)
-# ---------------------------------------------------------------------------
-# As of 2026, Unity has permanently removed offline/manual activation
-# (.alf -> .ulf) for Personal licenses - license.unity3d.com/manual now
-# reports "Offline activation is available only for Enterprise and Industry
-# seats". A UNITY_LICENSE secret can no longer be obtained on a free seat at
-# all, and game-ci/unity-builder@v4 has NOT been updated to work around this.
-#
-# The current working path for Unity Personal is game-ci/cli (a separate,
-# newer tool from the same GameCI project), which activates a Personal seat
-# directly online using nothing but UNITY_EMAIL + UNITY_PASSWORD - no license
-# file of any kind. That's what the android job below uses.
-#
-# If you ever upgrade to Unity Plus/Pro, UNITY_SERIAL works exactly as before
-# and nothing here needs to change - the license-check job already covers it.
-#
-# Required repository secrets for the android job (see Documentation/Building.md):
-#
-#   Personal (free):        UNITY_EMAIL, UNITY_PASSWORD
-#   Plus/Pro:                UNITY_SERIAL, UNITY_EMAIL, UNITY_PASSWORD
-#
-# =============================================================================
-
-name: CI
+name: Shadowbound — Unreal Android
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
+  push:
+    paths:
+      - 'Unreal/**'
+      - '.github/workflows/unreal-android.yml'
+      - '!Unreal/Saved/**'
+      - '!Unreal/DerivedDataCache/**'
+
+permissions:
+  contents: read
+
+# IMPORTANT:
+# GitHub-hosted standard runners do not contain Unreal Engine and only provide
+# 14 GB of SSD on the current standard Linux image. UE5 Android packaging
+# therefore runs on a self-hosted runner that already has UE 5.8.x + Android SDK/NDK.
+# This removes Unity licensing from the pipeline but does NOT magically install
+# a 50+ GB Unreal environment on a standard GitHub-hosted runner.
 
 jobs:
-  verify:
-    name: Verify (core tests, syntax, Unity layer)
-    runs-on: ubuntu-latest
-
+  package-android:
+    name: Package Android (UE 5.8.x)
+    runs-on: [self-hosted, Linux, x64, ue5, android]
+    env:
+      UE_ROOT: ${{ vars.UE_ROOT }}
+      PROJECT: ${{ github.workspace }}/Unreal/Shadowbound.uproject
+      OUTPUT: ${{ github.workspace }}/artifacts/android
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Set up .NET SDK
-        uses: actions/setup-dotnet@v4
-        with:
-          # 10.0.x builds everything (it is what the project is developed with),
-          # but the test suite and the syntax gate target net9.0 and need the
-          # 9.0 runtime to actually RUN, not just compile.
-          dotnet-version: |
-            10.0.x
-            9.0.x
-
-      - name: Core purity gate (core must stay engine-free)
-        run: bash Tools/check-core-purity.sh
-
-      - name: Core build + test suite
-        run: bash Tools/test-core.sh
-
-      - name: Syntax gate (every file parses at C# 9)
-        run: bash Tools/check-syntax.sh
-
-      - name: Unity layer type-check (real Unity reference assemblies)
-        run: bash Tools/check-unity-layer.sh
-
-  license-check:
-    name: Check for Unity credentials
-    runs-on: ubuntu-latest
-    needs: [verify]
-    outputs:
-      available: ${{ steps.check.outputs.available }}
-
-    steps:
-      - name: Check secrets
-        id: check
-        env:
-          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
-          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+      - name: Verify Unreal + Android toolchain
+        shell: bash
         run: |
-          # UNITY_EMAIL + UNITY_PASSWORD is all Personal (free) needs now -
-          # see the licensing note at the top of this file. UNITY_SERIAL
-          # (Plus/Pro) still requires these same two on top of the serial,
-          # so this check alone covers both cases.
-          if [ -n "$UNITY_EMAIL" ] && [ -n "$UNITY_PASSWORD" ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::UNITY_EMAIL / UNITY_PASSWORD not configured yet - skipping the APK build. See Documentation/Building.md."
-          fi
+          set -euo pipefail
+          test -n "${UE_ROOT:-}" || { echo "UE_ROOT repository variable is missing"; exit 1; }
+          test -x "$UE_ROOT/Engine/Build/BatchFiles/RunUAT.sh" || {
+            echo "RunUAT.sh was not found at $UE_ROOT"; exit 1;
+          }
+          mkdir -p "$OUTPUT"
+          echo "Using Unreal Engine at: $UE_ROOT"
+          echo "Project: $PROJECT"
 
-  android:
-    name: Build Android APK (Unity)
-    runs-on: ubuntu-latest
-    needs: [verify, license-check]
+      - name: Package Android Development / ASTC
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$UE_ROOT/Engine/Build/BatchFiles/RunUAT.sh" BuildCookRun \
+            -project="$PROJECT" \
+            -noP4 \
+            -utf8output \
+            -unattended \
+            -platform=Android \
+            -targetplatform=Android \
+            -cookflavor=ASTC \
+            -clientconfig=Development \
+            -build \
+            -cook \
+            -stage \
+            -pak \
+            -iostore \
+            -compressed \
+            -package \
+            -archive \
+            -archivedirectory="$OUTPUT"
 
-    # Only on pushes to main and manual runs - an APK per pull request is not
-    # worth 30 minutes of runner time.
-    if: >-
-      needs.license-check.outputs.available == 'true' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      - name: List generated artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          find "$OUTPUT" -type f -maxdepth 8 -print | sort
+          test -n "$(find "$OUTPUT" -type f \( -name '*.apk' -o -name '*.aab' \) -print -quit)" || {
+            echo "No APK/AAB was generated."; exit 1;
+          }
 
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: true
-
-      - name: Cache the Unity Library folder
-        uses: actions/cache@v4
-        with:
-          path: Library
-          key: Library-Shadowbound-Android-${{ hashFiles('Packages/manifest.json') }}
-          restore-keys: |
-            Library-Shadowbound-Android-
-            Library-Shadowbound-
-
-      # game-ci/cli, not game-ci/unity-builder@v4 - see the licensing note at
-      # the top of this file for why. This is a new tool (first released
-      # September 2026), so the exact flags below are our best-effort first
-      # attempt; if this step fails, the error output is what we fix it from,
-      # same as every other step we've debugged in this file so far.
-      - name: Build the APK
-        uses: game-ci/cli@v0.1.69
-        env:
-          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
-          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
-          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
-        with:
-          args: >-
-            build .
-            --engine unity
-            --target-platform Android
-            --build-method Shadowbound.Editor.ProjectSetup.BuildAndroidFromCommandLine
-            --provider-strategy local-docker
-
-      - name: Upload the APK
+      - name: Upload Android artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Shadowbound-APK
-          path: build/Android/*.apk
+          name: shadowbound-android-${{ github.sha }}
+          path: artifacts/android/**/*
           if-no-files-found: error
+          retention-days: 7
