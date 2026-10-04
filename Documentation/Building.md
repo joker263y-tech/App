@@ -153,22 +153,30 @@ Every run reports exactly one of:
 
 It never creates a placeholder APK, and success requires a real, validated one.
 
-### The measured limitation on free runners
+### What the free runner actually reports
 
-A GitHub **standard** hosted runner (public repo) has **4 vCPU / 16 GB RAM / 14 GB
-SSD**, and a **6-hour** job limit. Building UE Android there is not possible:
+Don't trust the datasheet over the measurement. GitHub's reference lists standard
+runners as 4 vCPU / 16 GB RAM / **14 GB SSD**, but a real `android.yml` run on the
+public repo measured **87 GB free disk**, 16 GB RAM and 4 vCPU — so disk is
+*marginal*, not a categorical blocker, and the workflow reports the real number.
 
-- Epic's official image `ghcr.io/epicgames/unreal-engine` is **~38 GB unpacked**.
-- Plus Android SDK/NDK/JDK (~10 GB) and cook/build intermediates (~20 GB).
-- Practical floor: **~70 GB free disk**. Even after reclaiming preinstalled
-  toolchains, a standard runner provides far less.
-- The image is **private**: it needs a GitHub account linked to an Epic account
-  and a token with `read:packages` (`GHCR_TOKEN`).
-- `actions/cache` is capped at **10 GB per repository**, so it cannot cache the
-  image (the disk limitation is not solvable with caching).
+Against an estimated requirement of ~90 GB (≈38 GB engine image + ~10 GB Android
+SDK/NDK/JDK + ~20–40 GB cook/build intermediates), the free runner is on the
+edge. The limitation that actually stopped the measured run was **image
+entitlement**, not disk:
 
-The `preflight` job measures this on the real runner and writes the numbers to the
-job summary, so the limitation is demonstrated rather than asserted.
+- Epic's image `ghcr.io/epicgames/unreal-engine` is **private** — it needs a
+  GitHub account linked to an Epic account and a token with `read:packages`
+  (the `GHCR_TOKEN` secret). Without it the image cannot be pulled, so no build
+  starts. This is what the run reported as its reason.
+- The remaining risks with a free runner are RAM (16 GB), CPU (4) and the
+  **6-hour** job limit: UE Android cooking is CPU-heavy and may not finish.
+- `actions/cache` is capped at **10 GB per repository**, so caching cannot carry
+  a 38 GB image — that route is closed regardless.
+
+The `preflight` job measures the runner and writes the numbers to the job summary,
+and the `package` job lists every unmet prerequisite, so the limitation is
+demonstrated rather than asserted.
 
 ### How to make it build
 
