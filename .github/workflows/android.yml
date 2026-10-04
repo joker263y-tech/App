@@ -137,6 +137,10 @@ jobs:
         id: res
         run: |
           set -euo pipefail
+          # Reclaim first, so the build gets the best disk this runner can offer.
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost 2>/dev/null || true
+          sudo apt-get clean 2>/dev/null || true
           echo "===== raw evidence ====="
           df -h / | sed 's/^/df: /'
           free -h | sed 's/^/mem: /'
@@ -151,9 +155,10 @@ jobs:
             echo "::warning::Only ${DISK} GB free; ~${REQ_DISK_GB} GB estimated for a full UE Android package."
           fi
 
+      # Always tested, independent of disk: entitlement to Epic's private image
+      # is a separate fact and must not be inferred from a skipped step.
       - name: Log in to GitHub Container Registry
         id: ghcr
-        if: steps.res.outputs.disk_ok == 'true'
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
         run: |
