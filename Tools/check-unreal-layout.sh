@@ -91,6 +91,10 @@ if [ -f "$ROOT/Config/DefaultEngine.ini" ]; then
     if ! grep -q 'bBuildForArm64=True' "$ROOT/Config/DefaultEngine.ini"; then
         fail "DefaultEngine.ini does not target Android ARM64"
     fi
+
+    if ! grep -q 'TargetSDKVersion=35' "$ROOT/Config/DefaultEngine.ini"; then
+        fail "DefaultEngine.ini does not target Android API 35 (required by UE 5.7+)"
+    fi
 fi
 
 if [ -f "$ROOT/Config/DefaultInput.ini" ]; then

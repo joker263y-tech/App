@@ -14,7 +14,8 @@ claim as "the game works", and the difference matters.
 | C++ core compiles (plain compiler, warnings are errors) | `bash Tools/test-core-cpp.sh` | Pass — `g++ -std=c++17 -Wall -Wextra -Werror` |
 | C++ core test suite | `bash Tools/test-core-cpp.sh` | **82 passed, 0 failed** |
 | Unreal project layout is complete and Unity-free | `bash Tools/check-unreal-layout.sh` | Pass |
-| Android build script fails honestly without Unreal Engine | `bash Tools/build-android.sh` | **Exits 1** with an explanation; produces no APK |
+| Android build script classifies its environment honestly | `bash Tools/build-android.sh` | **Exits 3** (ENVIRONMENT LIMITATION) with an explanation; produces no APK |
+| Android workflow runs and measures the runner | GitHub Actions `android.yml` | See "The Unreal Android build" below |
 
 All of these run without Unreal Engine installed.
 

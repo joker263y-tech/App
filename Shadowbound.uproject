@@ -1,6 +1,6 @@
 {
   "FileVersion": 3,
-  "EngineAssociation": "5.6",
+  "EngineAssociation": "5.8",
   "Category": "Game",
   "Description": "SHADOWBOUND: THE LAST NIGHT - an original dark-fantasy 3D action RPG for Android. Unreal Engine 5 is the primary engine of this repository; CI builds Android ARM64 through RunUAT (see Tools/build-android.sh).",
   "Modules": [

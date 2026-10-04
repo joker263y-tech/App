@@ -6,8 +6,8 @@
 | --- | --- |
 | Run the C# core test suite | .NET SDK 8.0 or newer |
 | Run the C++ core test suite | A C++17 compiler (`g++` or `clang++`) |
-| Open, play and build the game | **Unreal Engine 5.6** with the Android platform installed |
-| Produce an APK | Unreal Engine 5.6 + Android SDK/NDK/JDK |
+| Open, play and build the game | **Unreal Engine 5.8** with the Android platform installed |
+| Produce an APK | Unreal Engine 5.8 + Android SDK 35 / NDK r27c / build-tools 35.0.1 / OpenJDK 21.0.3 |
 
 The core test suites need no Unreal Engine. Unreal Engine needs no .NET SDK. They
 are independent.
@@ -41,7 +41,7 @@ check-unreal-layout: OK (Unreal project layout is complete and Unity-free)
 
 ## 2. Open the project in Unreal Engine
 
-1. Install **Unreal Engine 5.6** with the **Android** platform (Epic Games
+1. Install **Unreal Engine 5.8** with the **Android** platform (Epic Games
    Launcher → Android platform components).
 2. Right-click `Shadowbound.uproject` → **Generate Visual Studio project files**
    (or use your IDE's equivalent on Linux/macOS).
@@ -122,36 +122,74 @@ Set in `Config/DefaultEngine.ini` under
 | Architecture | ARM64 only (`bBuildForArm64=True`, `bBuildForX86=False`) | Required for Play Store submission; halves build size |
 | Graphics API | Vulkan (`bSupportsVulkan=True`) | Faster on the target hardware |
 | Orientation | Landscape | A third-person action game is unplayable in portrait |
-| Minimum API | 24 (Android 7.0) | Covers the target device range without legacy branches |
+| Target API | 35 (`TargetSDKVersion=35`) | Google Play requires target API 35 for new apps and updates; UE 5.7+ supports it |
+| Minimum API | 26 (`MinSDKVersion=26`) | UE 5.8's minimum install API for shipping projects |
 | Max aspect ratio | 2.4 | Modern notched/elongated phones |
+
+The **toolchain** (NDK r27c, build-tools 35.0.1, OpenJDK 21.0.3, SDK 35) is
+supplied by the build environment, not by this file. UE 5.8's documented Android
+requirements are exactly these versions.
 
 ## Continuous integration (GitHub Actions)
 
-`.github/workflows/ci.yml` runs two jobs:
+Two workflows:
 
-| Job | When | What it does |
+| Workflow | When | What it does |
 | --- | --- | --- |
-| **verify** | Every push and pull request | The four engine-free gates: purity, 563 C# tests, 82 C++ tests, Unreal layout. About a minute. |
-| **android** | Pushes to `main` and manual dispatch | Runs `Tools/build-android.sh` (RunUAT `BuildCookRun`) when Unreal Engine is available, then uploads the APK. |
+| **`ci.yml`** | Every push and pull request | The four engine-free gates: purity, 563 C# tests, 82 C++ tests, Unreal layout. About a minute. |
+| **`android.yml`** | Pushes to `main` (build inputs) and manual dispatch | Packages Android ARM64 inside an Unreal Engine container image via `RunUAT BuildCookRun`, and classifies the outcome. |
 
-There are **no Unity licence secrets** anywhere in the workflow — Unreal does not
-need one.
+There are **no Unity licence secrets** anywhere.
 
-The `android` job needs Unreal Engine on the runner. GitHub's standard hosted
-runners ship none, and cloning Epic's source needs an Epic-linked account. To make
-the job build, set the repository variable `UNREAL_ENGINE_PATH` to a UE 5.6 install
-on:
+### How `android.yml` classifies its result
 
-- a **self-hosted runner** with Unreal Engine installed, or
-- a **UE-capable hosted runner image**.
+Every run reports exactly one of:
 
-Until then the job reports clearly that it has no engine and produces nothing: a
-normal push **skips** with a notice (no fake artifact), while a manual
-`workflow_dispatch` **fails loudly**, because someone explicitly asked it to build.
+| Verdict | Meaning | Job status |
+| --- | --- | --- |
+| **BUILD SUCCESS** | `Tools/build-android.sh` produced an APK that passed validation (contains `lib/arm64-v8a`, has an `AndroidManifest.xml`, plausible size). | passes |
+| **BUILD FAILURE** | An engine was present but compile/cook/package failed. | fails |
+| **ENVIRONMENT LIMITATION** | The runner cannot host the build (no engine image entitlement, or too little disk/RAM). | fails on manual dispatch, warns on push |
+
+It never creates a placeholder APK, and success requires a real, validated one.
+
+### The measured limitation on free runners
+
+A GitHub **standard** hosted runner (public repo) has **4 vCPU / 16 GB RAM / 14 GB
+SSD**, and a **6-hour** job limit. Building UE Android there is not possible:
+
+- Epic's official image `ghcr.io/epicgames/unreal-engine` is **~38 GB unpacked**.
+- Plus Android SDK/NDK/JDK (~10 GB) and cook/build intermediates (~20 GB).
+- Practical floor: **~70 GB free disk**. Even after reclaiming preinstalled
+  toolchains, a standard runner provides far less.
+- The image is **private**: it needs a GitHub account linked to an Epic account
+  and a token with `read:packages` (`GHCR_TOKEN`).
+- `actions/cache` is capped at **10 GB per repository**, so it cannot cache the
+  image (the disk limitation is not solvable with caching).
+
+The `preflight` job measures this on the real runner and writes the numbers to the
+job summary, so the limitation is demonstrated rather than asserted.
+
+### How to make it build
+
+Run the workflow manually with `runner` set to a **GitHub larger runner** — which
+requires GitHub Team/Enterprise and billing — with enough disk:
+
+| Larger runner | Disk | Verdict |
+| --- | --- | --- |
+| `ubuntu-4core` (4 vCPU / 16 GB) | 150 GB | disk OK, but slow |
+| `ubuntu-8core` (8 vCPU / 32 GB) | 300 GB | recommended |
+| `ubuntu-16core` (16 vCPU / 64 GB) | 600 GB | fastest |
+
+Also set the repository secret `GHCR_TOKEN` (a PAT with `read:packages`) and ensure
+the account is linked to Epic. Larger runners are **not free**; the standard free
+runner genuinely cannot package this project. The alternative is a **self-hosted
+runner** on any machine with UE 5.8 and ~100 GB free disk (which needs a machine,
+so it does not meet the "no PC" constraint).
 
 ## Troubleshooting
 
-**The project will not open / modules fail to compile.** Unreal 5.6 is required
+**The project will not open / modules fail to compile.** Unreal 5.8 is required
 (`EngineAssociation` in `Shadowbound.uproject`). Generate project files first, then
 build the `Shadowbound` target.
 

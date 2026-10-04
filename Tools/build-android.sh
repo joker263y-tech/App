@@ -3,27 +3,26 @@
 # Builds the Android ARM64 package through Unreal Automation Tool, from the
 # command line, without opening the editor.
 #
-# This script is deliberately honest about what it can and cannot do. It NEVER
-# pretends to have produced an APK, and it never fakes credentials: if Unreal
-# Engine is not present it says so and exits non-zero. That is the contract the
-# CI job relies on.
+# Target (matches UE 5.8's documented Android requirements):
+#   * Engine       Unreal Engine 5.8
+#   * Architecture Android ARM64 (arm64-v8a)
+#   * Graphics     Vulkan (see Config/DefaultEngine.ini)
+#   * SDK          target API 35 (minimum install API 26)
+#   * NDK          r27c
+#   * Build-tools  35.0.1
+#   * Java         OpenJDK 21.0.3
 #
-# Where Unreal Engine can come from (the runner decides):
+# This script NEVER fakes an APK. It either produces one and validates it, or it
+# exits non-zero and says why. There is no placeholder path.
 #
-#   * A SELF-HOSTED runner with Unreal Engine installed, exporting
-#     UNREAL_ENGINE_PATH=/path/to/UE_5.6 (the repository variable of the same
-#     name is read by .github/workflows/ci.yml).
-#   * A HOSTED runner is NOT enough on its own: GitHub's hosted images ship no
-#     Unreal Engine, and cloning EpicGames/UnrealEngine needs an Epic-linked
-#     GitHub account. A paid UE-capable runner image is the other option.
-#
-# There are no Unity licence secrets anywhere in this build. Unreal does not
-# need one.
+# Outcome contract (the workflow classifies on these):
+#   exit 0  -> BUILD SUCCESS, and an APK that passed validation
+#   exit 1  -> BUILD FAILURE (an engine was present but the build failed)
+#   exit 3  -> ENVIRONMENT LIMITATION (no engine / missing Android toolchain)
 #
 # Usage:  bash Tools/build-android.sh [ArchiveDir]
-# Exit 0 only when an APK was actually produced.
 # -----------------------------------------------------------------------------
-set -euo pipefail
+set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -31,25 +30,34 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT="$ROOT/Shadowbound.uproject"
 ARCHIVE_DIR="${1:-$ROOT/Build/Android}"
 
-if [ ! -f "$PROJECT" ]; then
-    echo "build-android: FAIL - Shadowbound.uproject not found at $PROJECT" >&2
+EXIT_ENV=3
+
+die_env() {
+    echo "build-android: ENVIRONMENT LIMITATION - $1" >&2
+    exit "$EXIT_ENV"
+}
+
+die_build() {
+    echo "build-android: BUILD FAILURE - $1" >&2
     exit 1
+}
+
+if [ ! -f "$PROJECT" ]; then
+    die_build "Shadowbound.uproject not found at $PROJECT"
 fi
 
 # -----------------------------------------------------------------------------
-# Locate Unreal Engine.
+# Locate Unreal Engine. A container image places it at /home/ue4/UnrealEngine.
 # -----------------------------------------------------------------------------
 find_runuat() {
     local engine_root="$1"
 
-    # Linux / macOS layout.
-    if [ -x "$engine_root/Engine/Build/BatchFiles/RunUAT.sh" ]; then
+    if [ -n "$engine_root" ] && [ -x "$engine_root/Engine/Build/BatchFiles/RunUAT.sh" ]; then
         echo "$engine_root/Engine/Build/BatchFiles/RunUAT.sh"
         return 0
     fi
 
-    # Windows layout (Git Bash).
-    if [ -f "$engine_root/Engine/Build/BatchFiles/RunUAT.bat" ]; then
+    if [ -n "$engine_root" ] && [ -f "$engine_root/Engine/Build/BatchFiles/RunUAT.bat" ]; then
         echo "$engine_root/Engine/Build/BatchFiles/RunUAT.bat"
         return 0
     fi
@@ -58,56 +66,70 @@ find_runuat() {
 }
 
 RUNUAT=""
-
+ENGINE_ROOT=""
 for candidate in \
     "${UNREAL_ENGINE_PATH:-}" \
     "${UE_ROOT:-}" \
     "${UE5_ROOT:-}" \
+    "/home/ue4/UnrealEngine" \
     "/opt/UnrealEngine" \
     "$HOME/UnrealEngine" \
     "/usr/local/UnrealEngine"; do
 
     if [ -n "$candidate" ] && RUNUAT="$(find_runuat "$candidate")"; then
+        ENGINE_ROOT="$candidate"
         break
     fi
-
     RUNUAT=""
 done
 
 if [ -z "$RUNUAT" ]; then
     cat >&2 <<'EOF'
-build-android: FAIL - Unreal Engine was not found, so no APK can be built.
+build-android: ENVIRONMENT LIMITATION - Unreal Engine was not found.
 
-This is expected on a machine without Unreal Engine installed (including
-GitHub's standard hosted runners). Nothing was faked; no package was produced.
+No APK was produced and nothing was faked. Provide Unreal Engine 5.8 by one of:
 
-To make this build, provide Unreal Engine 5.6 and point the build at it:
+  * Export UNREAL_ENGINE_PATH=/path/to/UE_5.8 (a self-hosted runner, or a
+    GitHub larger runner), or run inside an Unreal Engine container image
+    (which installs it at /home/ue4/UnrealEngine); or
+  * Set the repository variable UNREAL_ENGINE_PATH that the workflow reads.
 
-  * Export UNREAL_ENGINE_PATH=/path/to/UE_5.6 (or set the repository variable
-    UNREAL_ENGINE_PATH that .github/workflows/ci.yml reads), then rerun this
-    script; or
-  * Use a self-hosted CI runner with Unreal Engine installed; or
-  * Use a paid, UE-capable hosted runner image.
-
-Locations probed: $UNREAL_ENGINE_PATH, $UE_ROOT, $UE5_ROOT, /opt/UnrealEngine,
-$HOME/UnrealEngine, /usr/local/UnrealEngine (looking for
-Engine/Build/BatchFiles/RunUAT.sh|bat).
+Probed: $UNREAL_ENGINE_PATH, $UE_ROOT, $UE5_ROOT, /home/ue4/UnrealEngine,
+/opt/UnrealEngine, $HOME/UnrealEngine, /usr/local/UnrealEngine.
 EOF
-    exit 1
+    exit "$EXIT_ENV"
 fi
 
 echo "==> Unreal Automation Tool: $RUNUAT"
+echo "==> Engine root: $ENGINE_ROOT"
 echo "==> Project: $PROJECT"
 echo "==> Archive: $ARCHIVE_DIR"
+
+# -----------------------------------------------------------------------------
+# Android toolchain. The engine needs these to cross-compile; report what is
+# present so a failure is diagnosable from the log alone.
+# -----------------------------------------------------------------------------
+echo "==> Android toolchain"
+for var in ANDROID_HOME ANDROID_SDK_ROOT NDKROOT NDK_ROOT JAVA_HOME; do
+    printf '    %-16s %s\n' "$var" "${!var:-<unset>}"
+done
+
+MISSING=""
+[ -n "${ANDROID_HOME:-}${ANDROID_SDK_ROOT:-}" ] || MISSING="$MISSING ANDROID_HOME/ANDROID_SDK_ROOT"
+[ -n "${NDKROOT:-}${NDK_ROOT:-}" ] || MISSING="$MISSING NDKROOT/NDK_ROOT"
+[ -n "${JAVA_HOME:-}" ] || MISSING="$MISSING JAVA_HOME"
+
+if [ -n "$MISSING" ]; then
+    die_env "Android SDK/NDK/JDK not configured (missing:$MISSING). UE 5.8 needs SDK 35, NDK r27c, build-tools 35.0.1 and OpenJDK 21.0.3."
+fi
 
 rm -rf "$ARCHIVE_DIR"
 mkdir -p "$ARCHIVE_DIR"
 
 # -----------------------------------------------------------------------------
-# BuildCookRun: cook content, build the Android ARM64 binaries, then stage and
-# package. The engine's own tool does the work; this script only drives it and
-# verifies the result.
+# BuildCookRun: compile C++ for Android, cook content, stage and package.
 # -----------------------------------------------------------------------------
+set +e
 "$RUNUAT" BuildCookRun \
     -project="$PROJECT" \
     -noP4 \
@@ -122,17 +144,46 @@ mkdir -p "$ARCHIVE_DIR"
     -archive \
     -archivedirectory="$ARCHIVE_DIR" \
     -targetplatform=Android \
-    -buildtarget=Shadowbound \
-    -nop4
+    -buildtarget=Shadowbound
+RUNUAT_STATUS=$?
+set -e
 
-echo ""
-echo "==> Verifying an APK was produced"
+if [ "$RUNUAT_STATUS" -ne 0 ]; then
+    die_build "RunUAT BuildCookRun exited with status $RUNUAT_STATUS (see its output above)."
+fi
 
+# -----------------------------------------------------------------------------
+# Validate the APK. A build that reached here but produced nothing usable is a
+# failure, not a success.
+# -----------------------------------------------------------------------------
 APK="$(find "$ARCHIVE_DIR" -name '*.apk' -type f -print -quit || true)"
 
 if [ -z "$APK" ]; then
-    echo "build-android: FAIL - RunUAT finished but produced no APK under $ARCHIVE_DIR" >&2
-    exit 1
+    die_build "RunUAT reported success but no .apk was produced under $ARCHIVE_DIR."
 fi
 
-echo "build-android: OK - $APK"
+APK_SIZE_BYTES="$(stat -c '%s' "$APK" 2>/dev/null || stat -f '%z' "$APK")"
+APK_SIZE_MB=$(( APK_SIZE_BYTES / 1024 / 1024 ))
+
+if [ "$APK_SIZE_MB" -lt 20 ]; then
+    die_build "APK at $APK is only ${APK_SIZE_MB} MB; a real UE Android package is far larger. This is not a valid package."
+fi
+
+if command -v unzip >/dev/null 2>&1; then
+    if ! unzip -l "$APK" 2>/dev/null | grep -q 'lib/arm64-v8a/'; then
+        die_build "APK at $APK has no lib/arm64-v8a contents; it is not an ARM64 package."
+    fi
+
+    if ! unzip -l "$APK" 2>/dev/null | grep -q 'AndroidManifest.xml'; then
+        die_build "APK at $APK has no AndroidManifest.xml."
+    fi
+else
+    echo "build-android: WARNING - unzip unavailable, skipping internal APK inspection" >&2
+fi
+
+echo ""
+echo "build-android: BUILD SUCCESS"
+echo "APK_PATH=$APK"
+echo "APK_SIZE_BYTES=$APK_SIZE_BYTES"
+echo "APK_SIZE_MB=$APK_SIZE_MB"
+exit 0

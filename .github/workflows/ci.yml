@@ -1,5 +1,9 @@
 name: CI
 
+# Verification gates that need no game engine. The Unreal Engine Android build
+# lives in its own workflow (.github/workflows/android.yml) because it has very
+# different resource requirements and reports its own outcome.
+
 on:
   push:
     branches: [main]
@@ -36,69 +40,3 @@ jobs:
 
       - name: Unreal project layout
         run: bash Tools/check-unreal-layout.sh
-
-  android:
-    name: Build Android (Unreal Engine, RunUAT)
-    runs-on: ubuntu-latest
-    needs: verify
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/main')
-
-    env:
-      # Point this repository variable at an Unreal Engine 5.6 install on a
-      # runner that has one (a self-hosted runner, or a UE-capable hosted image).
-      # GitHub's standard hosted runners ship no engine, so without it this job
-      # honestly reports that it cannot build and produces nothing.
-      UNREAL_ENGINE_PATH: ${{ vars.UNREAL_ENGINE_PATH }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Locate Unreal Engine
-        id: probe
-        run: |
-          if [ -n "${UNREAL_ENGINE_PATH:-}" ] && [ -d "${UNREAL_ENGINE_PATH:-}" ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-            echo "Unreal Engine found at $UNREAL_ENGINE_PATH"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::No Unreal Engine available - set the repository variable UNREAL_ENGINE_PATH on a runner that has UE 5.6."
-          fi
-
-      - name: Explain the skip
-        if: steps.probe.outputs.available != 'true'
-        run: |
-          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
-          ## Android build: no Unreal Engine available
-
-          No APK was produced, and nothing was faked. Unreal Engine is not present
-          on this runner and no `UNREAL_ENGINE_PATH` repository variable is set.
-
-          To make this job build: install Unreal Engine 5.6 on a self-hosted runner
-          (or use a UE-capable hosted image) and set the repository variable
-          `UNREAL_ENGINE_PATH` to the engine root. The build then runs
-          `Tools/build-android.sh`, which drives `RunUAT BuildCookRun`.
-
-          There are no Unity licence secrets in this workflow.
-          EOF
-
-          # A manual dispatch asked for a build, so failing loudly is the honest
-          # answer. An ordinary push only skips, with the notice above.
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "::error::Android build was requested but Unreal Engine is not available."
-            exit 1
-          fi
-
-      - name: Build Android APK
-        if: steps.probe.outputs.available == 'true'
-        run: bash Tools/build-android.sh
-
-      - name: Upload APK
-        if: steps.probe.outputs.available == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: Shadowbound-APK
-          path: Build/Android/**/*.apk
-          if-no-files-found: error

@@ -13,8 +13,8 @@ combat, semi-open world, story-driven PvE.
 
 ## Engine
 
-**Unreal Engine 5.6** is the primary engine of this repository, targeting
-**Android ARM64**. This repository *is* the Unreal project: `Shadowbound.uproject`
+**Unreal Engine 5.8** is the primary engine of this repository, targeting
+**Android ARM64** (target API 35, NDK r27c, build-tools 35.0.1, OpenJDK 21.0.3). This repository *is* the Unreal project: `Shadowbound.uproject`
 and `Source/` live at the root, and there is no separate engine folder.
 
 The project was previously a Unity 6 project. It has been migrated to Unreal; the
@@ -32,8 +32,8 @@ settings have been removed.
 | Engine-free C# core (`Core/`) — combat, AI, items, quests, world, saves | **Done — 563 tests passing** |
 | Engine-free C++ core (`Source/ShadowboundCore/`) — ported combat/encounter slice | **Done — 82 tests passing** |
 | Unreal game layer (`Source/Shadowbound/`) — arena, player, enemies, HUD, input, game mode | Written — **never compiled or run** |
-| Android build (RunUAT `BuildCookRun`) | Scripted (`Tools/build-android.sh`) — **no APK has been produced** |
-| GitHub Actions CI | `verify` gates run; the `android` job builds only where Unreal Engine is available |
+| Android build (RunUAT `BuildCookRun`) | Scripted (`Tools/build-android.sh`) — **no APK has been produced**; the free GitHub runner is a proven **environment limitation** (see `Documentation/Building.md`) |
+| GitHub Actions CI | `ci.yml` runs the engine-free gates; `android.yml` packages ARM64 in a UE container and classifies the outcome |
 
 ### Read this before assuming it works
 
@@ -61,7 +61,7 @@ bash Tools/test-core.sh          # C# purity gate + 563 tests
 bash Tools/test-core-cpp.sh      # C++ purity gate + 82 tests (no engine needed)
 bash Tools/check-core-purity.sh  # both cores must stay engine-free
 bash Tools/check-unreal-layout.sh# the Unreal project layout is complete & Unity-free
-bash Tools/build-android.sh      # RunUAT BuildCookRun; fails honestly without UE
+bash Tools/build-android.sh      # RunUAT BuildCookRun; exits 3 (ENVIRONMENT LIMITATION) without UE
 ```
 
 ---

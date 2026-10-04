@@ -1,0 +1,247 @@
+name: Shadowbound — Unreal Android
+
+# =============================================================================
+# Packages the game for Android ARM64 through Unreal Automation Tool
+# (RunUAT BuildCookRun) inside an Unreal Engine container image.
+#
+# This workflow reports exactly one of three outcomes, in the job summary and
+# through its exit status:
+#
+#   BUILD SUCCESS            an APK was produced AND validated (arm64-v8a libs,
+#                            manifest present, plausible size).
+#   BUILD FAILURE            an engine was present but compiling/cooking/
+#                            packaging failed.
+#   ENVIRONMENT LIMITATION   the runner cannot host the build at all (no engine
+#                            image entitlement, or insufficient disk/RAM/CPU).
+#
+# It never creates a placeholder APK and never reports success without one.
+#
+# WHY THE DEFAULT RUNNER CANNOT DO THIS (documented, measured in `preflight`):
+#   * GitHub standard runners: 4 vCPU / 16 GB RAM / 14 GB SSD (public repo).
+#   * Epic's official image ghcr.io/epicgames/unreal-engine is ~38 GB unpacked.
+#   * Plus Android SDK/NDK/JDK (~10 GB) and build intermediates (~20 GB).
+#   => ~70 GB free disk is the practical floor; the runner has ~14-17 GB, and
+#      the job limit is 6 hours.
+#   * The image is private: it needs a GitHub account linked to an Epic account
+#     plus a token with read:packages.
+#   * actions/cache is capped at 10 GB per repository, so it cannot cache a
+#      38 GB image.
+#
+# To actually build, run this workflow with `runner` set to a GitHub LARGER
+# RUNNER label (8 vCPU/32 GB/300 GB or larger) and provide GHCR_TOKEN. See
+# Documentation/Building.md.
+# =============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: >-
+          Runner label. 'ubuntu-latest' proves the limitation; use a larger
+          runner (e.g. ubuntu-8core-300gb) for a real build.
+        required: false
+        default: ubuntu-latest
+      engine_image:
+        description: 'Unreal Engine container image reference'
+        required: false
+        default: ghcr.io/epicgames/unreal-engine:dev-5.8
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/android.yml'
+      - 'Shadowbound.uproject'
+      - 'Config/**'
+      - 'Source/**'
+      - 'Tools/build-android.sh'
+
+concurrency:
+  group: unreal-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    name: Environment preflight
+    runs-on: ubuntu-latest
+    outputs:
+      feasible: ${{ steps.measure.outputs.feasible }}
+    steps:
+      - name: Measure the runner against UE 5.8 Android requirements
+        id: measure
+        run: |
+          set -euo pipefail
+
+          # Try to reclaim the disk GitHub preinstalls content into. We own the
+          # machine for this job, and the build runs in a container, so the host
+          # toolchains are expendable. This is the honest attempt to overcome
+          # the disk limitation before declaring it.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk \
+                      /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL \
+                      /usr/local/share/boost 2>/dev/null || true
+          sudo apt-get clean 2>/dev/null || true
+
+          DISK=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          MEM=$(awk '/MemTotal/{printf "%d", $2/1024/1024}' /proc/meminfo)
+          CPU=$(nproc)
+
+          REQ_DISK=70
+          REQ_RAM=16
+          REQ_CPU=4
+
+          feasible=true
+          [ "$DISK" -ge "$REQ_DISK" ] || feasible=false
+          [ "$MEM"  -ge "$REQ_RAM"  ] || feasible=false
+          [ "$CPU"  -ge "$REQ_CPU"  ] || feasible=false
+
+          echo "free_disk_gb=$DISK" >> "$GITHUB_OUTPUT"
+          echo "ram_gb=$MEM"        >> "$GITHUB_OUTPUT"
+          echo "cpu=$CPU"           >> "$GITHUB_OUTPUT"
+          echo "feasible=$feasible" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Unreal Engine 5.8 — Android environment preflight"
+            echo ""
+            echo "| Resource | This runner | Required |"
+            echo "| --- | --- | --- |"
+            echo "| Free disk (after reclaim) | ${DISK} GB | ${REQ_DISK} GB |"
+            echo "| RAM | ${MEM} GB | ${REQ_RAM} GB |"
+            echo "| CPU | ${CPU} | ${REQ_CPU} |"
+            echo ""
+            echo "Required disk ≈ 38 GB engine image + ~10 GB Android SDK/NDK/JDK"
+            echo "+ ~20 GB cook/build intermediates."
+            echo ""
+            if [ "$feasible" = "true" ]; then
+              echo "**Verdict: FEASIBLE on this runner.**"
+            else
+              echo "**Verdict: ENVIRONMENT LIMITATION on this runner.**"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  package:
+    name: Package Android ARM64 (RunUAT BuildCookRun)
+    needs: preflight
+    runs-on: ${{ github.event.inputs.runner || 'ubuntu-latest' }}
+    timeout-minutes: 350
+    env:
+      ENGINE_IMAGE: ${{ github.event.inputs.engine_image || 'ghcr.io/epicgames/unreal-engine:dev-5.8' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Measure resources and decide whether to attempt the build
+        id: res
+        run: |
+          set -euo pipefail
+          DISK=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          echo "free_disk_gb=$DISK" >> "$GITHUB_OUTPUT"
+          REQ_DISK=70
+          if [ "$DISK" -ge "$REQ_DISK" ]; then
+            echo "attempt=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "attempt=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Only ${DISK} GB free disk; a UE 5.8 Android package needs about ${REQ_DISK} GB."
+          fi
+
+      - name: Log in to GitHub Container Registry
+        id: ghcr
+        if: steps.res.outputs.attempt == 'true'
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GHCR_TOKEN:-}" ]; then
+            echo "ghcr=missing" >> "$GITHUB_OUTPUT"
+            echo "::warning::No GHCR_TOKEN secret. Epic's images are private and need a token with read:packages from an Epic-linked account."
+            exit 0
+          fi
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "ghcr=ok" >> "$GITHUB_OUTPUT"
+
+      - name: Pull the Unreal Engine image
+        id: pull
+        if: steps.res.outputs.attempt == 'true' && steps.ghcr.outputs.ghcr == 'ok'
+        run: |
+          set -euo pipefail
+          if docker pull "$ENGINE_IMAGE"; then
+            echo "pulled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "pulled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Failed to pull $ENGINE_IMAGE."
+          fi
+
+      - name: Build, cook, package and validate the APK
+        id: build
+        if: steps.pull.outputs.pulled == 'true'
+        run: |
+          set +e
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/project" \
+            -e UNREAL_ENGINE_PATH=/home/ue4/UnrealEngine \
+            -e ANDROID_HOME -e ANDROID_SDK_ROOT -e NDKROOT -e NDK_ROOT -e JAVA_HOME \
+            "$ENGINE_IMAGE" \
+            bash -lc 'cd /project && bash Tools/build-android.sh /project/Build/Android'
+          STATUS=$?
+          set -e
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Classify the outcome
+        id: verdict
+        run: |
+          set -euo pipefail
+
+          VERDICT="ENVIRONMENT LIMITATION"
+          DETAIL=""
+
+          if [ "${{ steps.pull.outputs.pulled }}" = "true" ]; then
+            STATUS="${{ steps.build.outputs.status }}"
+            if [ "$STATUS" = "0" ]; then
+              VERDICT="BUILD SUCCESS"
+              DETAIL="RunUAT BuildCookRun produced a validated ARM64 APK."
+            elif [ "$STATUS" = "3" ]; then
+              VERDICT="ENVIRONMENT LIMITATION"
+              DETAIL="The engine was present but the Android toolchain was incomplete inside the image."
+            else
+              VERDICT="BUILD FAILURE"
+              DETAIL="RunUAT BuildCookRun failed (status ${STATUS}). See the log above."
+            fi
+          elif [ "${{ steps.res.outputs.attempt }}" = "false" ]; then
+            DETAIL="Free disk ${{ steps.res.outputs.free_disk_gb }} GB is below the ~70 GB a UE 5.8 Android package needs. Use a larger runner."
+          elif [ "${{ steps.ghcr.outputs.ghcr }}" != "ok" ]; then
+            DETAIL="Epic's engine image is private and no usable GHCR_TOKEN was supplied."
+          elif [ "${{ steps.pull.outputs.pulled }}" = "false" ]; then
+            DETAIL="The engine image could not be pulled onto this runner."
+          else
+            DETAIL="The build did not reach a packaging step."
+          fi
+
+          echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Unreal Android — ${VERDICT}"
+            echo ""
+            echo "$DETAIL"
+            echo ""
+            echo "| Item | Value |"
+            echo "| --- | --- |"
+            echo "| Engine image | \`$ENGINE_IMAGE\` |"
+            echo "| Runner | \`${{ github.event.inputs.runner || 'ubuntu-latest' }}\` |"
+            echo "| Free disk at start | ${{ steps.res.outputs.free_disk_gb }} GB |"
+            echo "| Outcome | **${VERDICT}** |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$VERDICT" = "BUILD FAILURE" ]; then
+            echo "::error::$VERDICT — $DETAIL"
+            exit 1
+          fi
+          if [ "$VERDICT" = "ENVIRONMENT LIMITATION" ] && [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "::error::$VERDICT — $DETAIL"
+            exit 1
+          fi
+          echo "::notice::$VERDICT — $DETAIL"
+
+      - name: Upload APK (only if one was produced)
+        if: steps.pull.outputs.pulled == 'true' && steps.build.outputs.status == '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Shadowbound-Android-ARM64-APK
+          path: Build/Android/**/*.apk
+          if-no-files-found: error
