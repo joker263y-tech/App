@@ -153,23 +153,34 @@ Every run reports exactly one of:
 
 It never creates a placeholder APK, and success requires a real, validated one.
 
-### What the free runner actually reports
+### What the free runner actually reports (measured)
 
 Don't trust the datasheet over the measurement. GitHub's reference lists standard
-runners as 4 vCPU / 16 GB RAM / **14 GB SSD**, but a real `android.yml` run on the
-public repo measured **87 GB free disk**, 16 GB RAM and 4 vCPU — so disk is
-*marginal*, not a categorical blocker, and the workflow reports the real number.
+runners as 4 vCPU / 16 GB RAM / 14 GB SSD, but the real `android.yml` run on this
+public repo measured:
 
-Against an estimated requirement of ~90 GB (≈38 GB engine image + ~10 GB Android
-SDK/NDK/JDK + ~20–40 GB cook/build intermediates), the free runner is on the
-edge. The limitation that actually stopped the measured run was **image
-entitlement**, not disk:
+| Resource | Measured | Estimated requirement |
+| --- | --- | --- |
+| Disk (`/dev/root`) | 145 G total, **97 GB free** after reclaim | ~90 GB (≈38 GB engine image + ~10 GB Android SDK/NDK/JDK + ~20–40 GB cook/build intermediates) |
+| RAM | 15 GiB total, 14 GiB available | 16 GB |
+| CPU | 4 vCPU | 4 |
+| Job limit | 6 hours | — |
 
-- Epic's image `ghcr.io/epicgames/unreal-engine` is **private** — it needs a
-  GitHub account linked to an Epic account and a token with `read:packages`
+So disk and CPU met the estimate, and RAM is just under the 16 GB guideline. The
+limitation that actually stopped the run was **image entitlement**, and the run
+reported it as the sole reason:
+
+```
+ENVIRONMENT LIMITATION — Epic's official image is private and no usable
+GHCR_TOKEN (read:packages, Epic-linked account) was supplied
+```
+
+- Epic's image `ghcr.io/epicgames/unreal-engine` is **private**. It needs a
+  GitHub account linked to an Epic account plus a token with `read:packages`
   (the `GHCR_TOKEN` secret). Without it the image cannot be pulled, so no build
-  starts. This is what the run reported as its reason.
-- The remaining risks with a free runner are RAM (16 GB), CPU (4) and the
+  starts. The `Log in to GitHub Container Registry` step is deliberately run
+  regardless of disk, so this is a *tested* fact rather than an inference.
+- The remaining risks with a free runner are RAM (15 GiB), CPU (4) and the
   **6-hour** job limit: UE Android cooking is CPU-heavy and may not finish.
 - `actions/cache` is capped at **10 GB per repository**, so caching cannot carry
   a 38 GB image — that route is closed regardless.
@@ -180,20 +191,38 @@ demonstrated rather than asserted.
 
 ### How to make it build
 
-Run the workflow manually with `runner` set to a **GitHub larger runner** — which
-requires GitHub Team/Enterprise and billing — with enough disk:
+**Path A — free, browser only (try this first).** Unlock the engine image and run
+on the standard free runner:
 
-| Larger runner | Disk | Verdict |
-| --- | --- | --- |
-| `ubuntu-4core` (4 vCPU / 16 GB) | 150 GB | disk OK, but slow |
-| `ubuntu-8core` (8 vCPU / 32 GB) | 300 GB | recommended |
-| `ubuntu-16core` (16 vCPU / 64 GB) | 600 GB | fastest |
+1. Link your GitHub account to an Epic Games account and accept the Unreal Engine
+   EULA (browser only, free): <https://www.unrealengine.com/en-US/ue-on-github>.
+2. Create a GitHub Personal Access Token with the **`read:packages`** scope.
+3. Add it as the repository secret **`GHCR_TOKEN`**
+   (*Settings → Secrets and variables → Actions → New repository secret*).
+4. Run the **“Shadowbound — Unreal Android”** workflow via *Run workflow*
+   (*Actions → the workflow → Run workflow*), leaving `runner` as `ubuntu-latest`.
 
-Also set the repository secret `GHCR_TOKEN` (a PAT with `read:packages`) and ensure
-the account is linked to Epic. Larger runners are **not free**; the standard free
-runner genuinely cannot package this project. The alternative is a **self-hosted
-runner** on any machine with UE 5.8 and ~100 GB free disk (which needs a machine,
-so it does not meet the "no PC" constraint).
+The run then pulls Epic's image and does the real Compile → Cook → Package →
+Validate. Whether a free runner (4 vCPU / 15 GiB / 6 h) finishes a UE Android
+cook is genuinely uncertain — that is an experiment Path A answers, with real
+logs, and the workflow will report BUILD SUCCESS or BUILD FAILURE honestly.
+
+**Path B — reliable, paid.** Unlock the image as above, then run the workflow with
+`runner` set to a **GitHub larger runner** (needs GitHub Team/Enterprise and
+billing):
+
+| Larger runner | Disk | RAM | Notes |
+| --- | --- | --- | --- |
+| `ubuntu-4core` | 150 GB | 16 GB | disk fine, slow |
+| `ubuntu-8core` | 300 GB | 32 GB | recommended |
+| `ubuntu-16core` | 600 GB | 64 GB | fastest |
+
+**Path C — self-hosted runner.** Any machine with UE 5.8 and ~100 GB free disk,
+registered as a self-hosted runner, with `UNREAL_ENGINE_PATH` set. This needs a
+machine, so it does not meet the “no PC” constraint.
+
+`GHCR_TOKEN` is needed by every path: the engine image is not public, and that is
+the one thing standing between the repository and a real build today.
 
 ## Troubleshooting
 

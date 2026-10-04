@@ -70,6 +70,43 @@ Be explicit about this, because the gaps are real.
 rules of the ported slice are verified by execution in two languages; the Unreal
 layer that presents them is, so far, only written.
 
+## The Unreal Android build on GitHub Actions
+
+`android.yml` was implemented and run for real on this repository (public, so the
+standard free runner). Two runs were made, and the results are observations, not
+predictions:
+
+| Run | Event | Result |
+| --- | --- | --- |
+| [37171795596](https://github.com/joker263y-tech/App/actions/runs/37171795596) | push | completed (ENVIRONMENT LIMITATION, reported as a notice on push) |
+| [37172144973](https://github.com/joker263y-tech/App/actions/runs/37172144973) | workflow_dispatch | **failed — ENVIRONMENT LIMITATION** (the intended outcome on an explicit request) |
+
+Measured on the free runner (`Environment preflight` and `Package` jobs):
+
+```
+df: /dev/root   145G   48G   97G  33% /
+mem: Mem:       15Gi   ...   14Gi available
+nproc: 4
+```
+
+Against the workflow's estimated requirement (~90 GB disk, 16 GB RAM, 4 CPU):
+disk and CPU passed, RAM (15 GiB) is just under. The tested blocker was:
+
+```
+ENVIRONMENT LIMITATION — Epic's official image is private and no usable
+GHCR_TOKEN (read:packages, Epic-linked account) was supplied
+```
+
+Because `GHCR_TOKEN` is not configured, the engine image could not be pulled, so
+**no compile/cook/package step ran and no APK exists**. Nothing was faked: the
+workflow skipped the build and APK-upload steps and produced no artifact.
+
+**What is proven and what is not:** the workflow, its resource measurement, and
+its three-way classification are proven by execution. Whether a free runner can
+*finish* a UE 5.8 Android cook is **not** proven — that requires `GHCR_TOKEN`, and
+the remaining risks are 15 GiB RAM, 4 vCPU and the 6-hour job limit. Path A in
+`Documentation/Building.md` is the free experiment that answers it.
+
 ## Reproducing the verification
 
 ```bash
