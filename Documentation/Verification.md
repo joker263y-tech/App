@@ -8,201 +8,48 @@ claim as "the game works", and the difference matters.
 
 | Check | Command | Result |
 | --- | --- | --- |
-| Core purity gate | `bash Tools/check-core-purity.sh` | Pass — core is engine-free |
-| Core compiles under Unity's constraints | `bash Tools/test-core.sh` | Pass — netstandard2.1, C# 9, 0 warnings |
-| Core test suite | `bash Tools/test-core.sh` | **563 passed, 0 failed** |
-| Every C# file parses at C# 9 | `bash Tools/check-syntax.sh` | Pass — 47 files, no syntax errors |
-| **Unity layer type-checks against real Unity assemblies** | `bash Tools/check-unity-layer.sh` | Pass — **0 errors, 0 warnings** |
+| Core purity gate (C# and C++) | `bash Tools/check-core-purity.sh` | Pass — both cores are engine-free |
+| C# core compiles under the original constraints | `bash Tools/test-core.sh` | Pass — netstandard2.1, C# 9, 0 warnings |
+| C# core test suite | `bash Tools/test-core.sh` | **563 passed, 0 failed** |
+| C++ core compiles (plain compiler, warnings are errors) | `bash Tools/test-core-cpp.sh` | Pass — `g++ -std=c++17 -Wall -Wextra -Werror` |
+| C++ core test suite | `bash Tools/test-core-cpp.sh` | **82 passed, 0 failed** |
+| Unreal project layout is complete and Unity-free | `bash Tools/check-unreal-layout.sh` | Pass |
+| Android build script fails honestly without Unreal Engine | `bash Tools/build-android.sh` | **Exits 1** with an explanation; produces no APK |
 
-All three commands run without a Unity installation.
+All of these run without Unreal Engine installed.
 
-### The test suite
+### Cross-implementation parity
 
-The suite exercises the **real** core sources. The test project compiles
-`Assets/Scripts/Core/**/*.cs` directly — not a copy, not a re-implementation — so
-every green test is a statement about the code that ships.
+The C++ core is a port of the C# core, so the two must agree on the values that
+make the simulation deterministic. This was checked by running the same seed
+through both implementations:
 
-The harness is also proven to fail when it should: a deliberate
-`using UnityEngine;` in a core file makes the purity gate fail, and a deliberate
-`record` type or C# 10 syntax makes the netstandard2.1 build fail.
+```
+C#  DeterministicRng(42):  NextUInt x3 = 492690617, 1919685028, 3561993920
+C++ DeterministicRng(42):  NextUInt x3 = 492690617, 1919685028, 3561993920
 
-Coverage spans numerics, determinism, stats, damage and mitigation, vitals, status
-effects, abilities, attack resolution, enemy AI, items and loot, progression,
-quests, chapters, the world graph, JSON serialisation and save migration, plus
-integration tests: a headless encounter driven to completion, a full session
-where a kill turns into loot, experience, journal progress and a save that
-round-trips, the consumable path (quest reward → draught → drunk → healed), and
-attribute-point spending including that spent points survive saving and loading.
+C#  NextFloat() = 0.114713400     C++ NextFloat() = 0.11471343
+C#  StableHash("a") = af63dc4c8601ec8c
+C++ StableHash("a") = af63dc4c8601ec8c
+```
 
-### The Unity layer type-check
+The C++ suite pins these values as tests (`RngTests.cpp`), so a future change that
+breaks the sequence fails the build rather than silently changing how a fight
+plays out.
 
-`Tests/Shadowbound.UnityCheck` supplies real Unity reference assemblies — via the
-`OpenMod.UnityEngine.Redist` package, which includes `UnityEngine.CoreModule`,
-`UnityEngine.UIModule`, `UnityEngine.PhysicsModule`, `UnityEngine.UI` and
-`UnityEngine.TextRenderingModule` — and compiles the actual sources from
-`Assets/Scripts/Game` against them.
+### The test suites
 
-The new Input System ships with no reference assembly, so
-`Tests/Shadowbound.UnityCheck/Shims/` supplies its public surface. Those shim
-types are written to match the package's documented API, and they live outside
-`Assets/` so Unity never sees them.
+Both suites exercise the **real** game-rule sources — not a copy, not a
+re-implementation — so every green test is a statement about the code that ships.
 
-**This proved its worth immediately.** Type-checking the Game assembly for the
-first time found two genuine compile errors that a hand review had missed:
+- The C# suite compiles `Core/**/*.cs` directly under `netstandard2.1` with
+  `LangVersion 9.0`, the constraints the project originally targeted.
+- The C++ suite compiles `Source/ShadowboundCore/**/*.cpp` (except the module
+  registration file) with a plain C++ compiler.
 
-1. `GameBootstrap` declared `BuildHud` as **both** a public field and a private
-   method — `CS0102`. The Unity build would not have started.
-2. `FileSaveStorage` declared a `Directory` property, which **shadowed
-   `System.IO.Directory`** in the same class — three `CS1061` errors. Renamed to
-   `DirectoryPath`.
-
-By the time it reported clean, every Unity API and every core API the Game layer
-calls had been confirmed to exist with the signature used. It has since caught
-two more: `ModifierOp` has no member called `Percent` or `Multiply` (they are
-`PercentAdditive` and `PercentMultiplicative`), which a menu label would have
-tripped over.
-
-## The runtime-path audit
-
-"Compiles and is tested" is not "is reachable while playing". Auditing the project
-against that standard found three features that were fully implemented, fully
-tested, and **impossible to reach in a running game**. None of them failed a test,
-because every test exercised them directly rather than through the path a player
-takes.
-
-### 1. Quest rewards were never granted, and the story could not advance
-
-A quest only becomes startable once its prerequisite has been **turned in**.
-Turning in is a separate step from completing, and nothing in the project ever
-performed it. So:
-
-- The second quest onward was permanently `Locked`, and its reward was never
-  granted. The authored story was unreachable past the opening scene.
-- Every individual quest test still passed, because each examined one quest in
-  isolation and a single quest does not need a turn-in to be tested.
-
-Fixed in `GameSession.AdvanceQuests`, with `QuestAdvancementTests` driving the
-chain end to end: finish a quest, get paid, watch the next one appear. The old
-behaviour is asserted too, as `WithoutAutoAdvance_TheStoryStallsAfterTheOpeningQuest`,
-so it cannot come back silently.
-
-This change also altered eight existing tests, all of which had encoded the
-broken flow. Each was confirmed to be a stale expectation rather than a
-regression, and they now disable automatic advancement so they keep testing the
-plumbing they are about.
-
-### 2. Nothing could ever be equipped
-
-`EquipmentLoadout` was complete and tested, wired into saving, and called by
-nothing at runtime. The Warden's Blade handed over by the second quest went into
-the bag and stayed there. `GameSession.TryEquipFromInventory` closes it, and the
-menu gives the player a way to ask.
-
-The swap is deliberately one transaction in the core rather than an equip
-followed by a stow in the UI, because the two-step version destroys the replaced
-item whenever the bag is full - which is exactly when a player finds an upgrade.
-`EquippingIntoAFullBag_StillKeepsTheReplacedItem` pins that down.
-
-### 3. The save and equipment screens were unreachable on a phone
-
-The menu opened with `Esc` or `Tab`. Android has no keyboard. The menu, the save
-slots and the equipment screen would all have been present and invisible in the
-build this project targets. Fixed with an on-screen button, plus a `RESUME` row
-that is always first - a menu you can open but not close is worse than no menu.
-
-This one was caught while writing the code rather than by the audit, which is the
-argument for asking the question of every change rather than once.
-
-### 4. The world graph was decorative, and the story was still unfinishable
-
-Two quests ask the player to reach a named region, and **there was no way to
-travel between regions at all**. The region graph, its connections, its chapter
-gates and its loot tables were all authored, populated and tested - and none of
-it existed in the running game. Fixing the quest chain alone would not have made
-the story completable, because the third quest's objective was in a place the
-player could not go.
-
-Implementing travel exposed two more problems, both found by tests written for
-the purpose:
-
-- `WorldGraph.CanEnter` enforces the **chapter gate only** and knows nothing
-  about where the player is standing. Navigating by it alone would have let the
-  player walk from the camp straight into the final sanctum, making every
-  connection in the map meaningless. The rule now lives in
-  `GameSession.CanTravelTo`: the gate must be open *and* the destination must be
-  next door or already visited.
-- The starting region was assigned directly by the content rather than entered, so
-  it was never marked discovered - meaning the player could never fast-travel back
-  to the hub they began in. Setting `RegionId` now records the discovery, so
-  "being somewhere you have never been" is not a state that can exist.
-
-The route the story requires is now asserted step by step in
-`RegionTravelTests.TheStorysRequiredRegions_AreReachableInOrder`, so a future
-change to a region's gate cannot silently strand the story again.
-
-### 5. The second pass: consumables, attribute points, and rows below the screen
-
-Re-auditing the same standard after the first four fixes found three more
-unreachable paths, in the same shape as before:
-
-- **Consumables could never be used.** The quest chain hands out five ember
-  draughts, the item database described their effects, `Vitals.Heal` worked and
-  was tested — and nothing in the game connected them. The reward for the opening
-  quest was an item that did nothing. `GameSession.TryUseConsumable` is the rule,
-  and the menu's CARRIED section now lists `Use` rows with the effects spelled out.
-- **Attribute points could never be spent.** Levels and quests granted points,
-  the HUD counted them on screen, `ProgressionSystem.TrySpendAttributePoint`
-  existed and was tested — and nothing called it. The menu now has an ATTRIBUTES
-  page showing each stat's value before and after, wired to the same call.
-  Spending exposed a second problem: base stats are rebuilt from the growth table
-  on every load, so spent points would have **vanished on the next load**. The
-  cumulative boosts are now part of the save (`statBoosts`, saved as totals so
-  rebalancing the award table later cannot retroactively rebuild old characters),
-  and `LoadingTheSameSaveTwice_DoesNotStackTheBoosts` pins the idempotence down.
-- **The menu drew its rows off the screen.** The row pool held 14 rows but the
-  layout put row 12+ below the panel edge and off the display — so with a full
-  bag, the save rows were unreachable. The menu is now paged (character,
-  attributes, world, saves) and the row geometry fits the whole pool inside the
-  panel. A feature whose button renders at y = -680 is not a feature.
-
-The pattern is the same in all seven cases: each system was complete and tested
-*as a system*, and missing *as a path a player walks*. The tests for these fixes
-are written at the same level as the fixes — `ConsumableTests` and
-`AttributePointTests` drive `GameSession` the way the menu does, not the way the
-unit tests of the underlying systems did.
-
-### Content validation moved into the tested core
-
-Content cross-checking used to live in the editor tooling, where it could only run
-by opening Unity — so the checking itself was never checked. It now lives in
-`Shadowbound.Core.Content.ContentValidator`, and 25 tests inject a specific fault
-each (a loot entry naming a missing item, an out-of-range attack index, a quest
-targeting a creature that does not exist, a prerequisite cycle, an unreachable
-region, and so on) and assert the validator names it.
-
-That distinction matters: a validator that reports "clean" is worthless unless it
-is also proven to fail when something is wrong. The clean result on the shipped
-content now means something.
-
-## Continuous integration: what actually ran
-
-The workflow has now executed on GitHub, and its first run earned its keep
-immediately:
-
-- **Run 1 (`3fe0355`) — failed.** `MSBUILD : error MSB1009: Project file does
-  not exist.` The blanket `*.csproj` ignore rule — present because Unity
-  generates a csproj per assembly — had swallowed the four hand-authored harness
-  projects, so the pushed repository **could not build its own test suite**. The
-  files existed locally and every local gate passed; that is exactly the
-  difference between "works here" and "works from a fresh clone". Fixed by
-  un-ignoring them (`e1d6850`).
-- **Run 2 (`e1d6850`) — passed.** verify: all four gates green on GitHub's
-  runner (purity, 563 tests, syntax, Unity layer type-check). licence-check:
-  passed. android: **skipped** — no Unity licence secret configured, as designed.
-
-The gates are therefore now verified to run on a clean machine from the pushed
-repository, not only in the workspace they were written in. The `android` job
-has still never executed.
+The purity gate is proven to fail when it should: a deliberate `using
+UnityEngine;` in the C# core, or a deliberate `#include "CoreMinimal.h"` in the
+C++ core, trips it.
 
 ## What has NOT been run
 
@@ -210,48 +57,31 @@ Be explicit about this, because the gaps are real.
 
 | Not verified | Why | What it would take |
 | --- | --- | --- |
-| **The `Editor` assembly compiling** | No `UnityEditor` reference assembly is available. | Open the project in Unity 6 and read the Console. |
-| **Runtime behaviour of anything** | No Unity installation. Nothing in the project has ever executed. | Press Play. |
-| **Anything visual** | Same reason. No rendering. | Press Play. |
-| **The Android build** | No Unity, no Android SDK, no NDK, no JDK. No APK can be produced without them. | `Shadowbound → Build Android APK` with the Android module installed, or the CI `android` job. |
-| **The GitHub Actions `android` job** | It **skips** on every run: no Unity licence secret is configured yet. The workflow's other jobs have run — see "Continuous integration: what actually ran" below. | Add a `UNITY_LICENSE` (or `UNITY_SERIAL`) repository secret. |
-| **`ProjectSetup.BuildAndroidFromCommandLine`** | Part of the Editor assembly, which has never compiled anywhere. | The CI `android` job, or Unity's Console. |
+| **The Unreal project compiling** | No Unreal Engine is installed in the build environment. | Generate project files and build with UE 5.6. |
+| **The Unreal game layer running** | Same reason. Nothing under `Source/Shadowbound/` has ever executed. | Press Play in UE 5.6. |
+| **Anything visual** | Same reason. No `.uproject` has been opened, nothing rendered. | Open and play. |
+| **The Android APK** | No Unreal Engine, no Android SDK/NDK/JDK. | `bash Tools/build-android.sh` on a UE-capable machine, or the CI `android` job. |
 | **Touch controls on a device** | Requires hardware. | Install the APK and play. |
 | **Performance on target hardware** | Requires hardware. | Profile on a mid-range phone. |
-| **Compiling on Unity 6 specifically** | The reference assemblies are Unity **2021.3**. Code that compiles here also compiles on Unity 6 *unless* Unity 6 removed an API. | Open in Unity 6. |
+| **The C# → C++ port parity beyond the engine-free slice** | Only the encounter-layer slice is ported so far; the remaining systems still exist as C# only. See `MIGRATION_PLAN.md`. | Port each slice and its tests. |
 
-**Therefore: this project has not been demonstrated to be playable.** The game
-rules are verified by execution. The Game assembly is verified to compile. Nothing
-has been run, seen, or installed.
+**Therefore: the Unreal game has not been demonstrated to be playable.** The game
+rules of the ported slice are verified by execution in two languages; the Unreal
+layer that presents them is, so far, only written.
 
 ## Reproducing the verification
 
 ```bash
-# The core: purity gate, compile under Unity's constraints, 563 tests.
+# Both cores: purity gate, then their test suites.
 bash Tools/test-core.sh
+bash Tools/test-core-cpp.sh
 
-# Just the assembly boundary rule.
+# Just the boundary rule.
 bash Tools/check-core-purity.sh
 
-# Parse every C# file at Unity's language level.
-bash Tools/check-syntax.sh
+# The Unreal project is structurally coherent and free of Unity leftovers.
+bash Tools/check-unreal-layout.sh
 
-# Type-check the Game assembly against real Unity reference assemblies.
-bash Tools/check-unity-layer.sh
+# Attempt the Android build. Without Unreal Engine this fails honestly.
+bash Tools/build-android.sh
 ```
-
-Inside Unity 6, after the project imports:
-
-1. Open the Console — there should be no compile errors.
-2. **Shadowbound → Set Up Project**
-3. **Shadowbound → Validate Content** — reports every authored item, creature,
-   loot table, quest, chapter and region, and flags any reference that points at
-   something that does not exist.
-4. Press **Play**.
-
-## Note on the reference assemblies
-
-`OpenMod.UnityEngine.Redist` is an unofficial third-party redistribution of Unity
-assemblies. It is used **only** by `Tests/Shadowbound.UnityCheck`, which Unity
-never compiles, so nothing in the shipped game depends on it. Restoring it needs
-network access on the first run.

@@ -6,55 +6,65 @@ This is a 3D action RPG targeting mid-range Android. The parts most likely to be
 subtly wrong — damage maths, AI decisions, loot distribution, progression curves,
 save compatibility — are exactly the parts that are hardest to check by playing.
 A wrong armour formula does not crash; it quietly makes late-game combat trivial.
-A mis-serialised save field does not crash; it loses a player's equipment three
-hours in.
 
 So the rules live in a place where they can be executed and asserted, and the
 engine only does what only an engine can do: read input, draw, and play sound.
 
-## Two assemblies, one compiler-enforced boundary
+## The migration, and why there are two cores
+
+The project was a Unity 6 project and is being migrated to **Unreal Engine 5**.
+The rules were always engine-free, so the migration is a re-hosting of the
+presentation and input layers, not a rewrite of the game.
+
+Because the port is done in reviewed slices rather than as one big-bang rewrite,
+both cores exist for now:
 
 ```
-Assets/Scripts/Core/    Shadowbound.Core    game rules. Zero engine references.
-Assets/Scripts/Game/    Shadowbound.Game    MonoBehaviours and presentation.
-Assets/Scripts/Editor/  Shadowbound.Editor  menu tooling.
+Core/                       the original engine-free C# rules (all systems)
+Source/ShadowboundCore/     the ported engine-free C++ rules (encounter slice)
+Source/Shadowbound/         the Unreal game layer (was Assets/Scripts/Game)
 ```
 
-The boundary is not a convention that erodes over time. It is enforced in three
-independent places:
+`MIGRATION_PLAN.md` is the authoritative list of what is ported and what is not.
+As each slice is ported, its C# original and tests stay until the C++ slice and
+its tests are in place; then the C# can be retired.
 
-1. **`Shadowbound.Core.asmdef` sets `"noEngineReferences": true`.** Unity will
-   refuse to compile the core assembly the moment any file in it names a
-   `UnityEngine` type. A developer cannot accidentally couple the rules to the
-   engine; the build stops them.
-2. **`Tools/check-core-purity.sh`** reproduces the same rule on the command line,
-   so a violation fails before Unity is ever opened.
-3. **`Tests/Shadowbound.Core.Build`** compiles the real core sources against
-   `netstandard2.1` with `LangVersion 9.0` — Unity 6's actual API surface and
-   language level. A C# 10 feature or a .NET-10-only method fails here rather
-   than in the editor.
+## Two boundaries, one rule
 
-## Dependency direction
+The rule is simple: **game rules never touch the engine.**
+
+- **C++ (`Source/ShadowboundCore`).** Depends only on the C++ standard library.
+  `Tools/check-core-purity.sh` fails if any file includes anything other than a
+  local `Sb*.h` header, or uses Unreal reflection macros. The single exception is
+  `ShadowboundCoreModule.cpp`, which exists only to register the module and is
+  excluded from the standalone build. This is what lets `Tools/test-core-cpp.sh`
+  compile and run the rules **with no Unreal Engine installed**.
+- **C# (`Core/`).** The original boundary, still enforced: no `UnityEngine`, no
+  `UNITY_` conditionals, no inspector attributes.
+
+The engine layer (`Source/Shadowbound`) may reference both the engine and the core.
+The core references upward to nothing.
+
+## Module dependency direction
 
 ```
-        Core  (no engine)
-          ^
-          |  referenced by
-          |
-     Game (Unity)  --->  UnityEngine, Input System, UGUI
-          ^
-          |
-     Editor (Unity) --->  UnityEditor
+  ShadowboundCore   (engine-free C++: standard library only)
+        ^
+        |  PublicDependencyNames
+        |
+    Shadowbound     (Unreal: Core, CoreUObject, Engine, InputCore, EnhancedInput)
 ```
 
-Core never references upward. This is what makes the rules testable: the test
-harness is just another consumer of Core, with no engine in the loop.
+`ShadowboundCore.Build.cs` depends on `Core` for exactly one reason — module
+registration — and no file but the registration file may include an engine header.
 
 ## The simulation model
 
-`EncounterSimulation` is a fixed-timestep loop. Fixed, not variable, because
-combat tuning is expressed in seconds and a variable step makes the same input
-produce different outcomes on a fast and a slow device.
+`ShadowboundCore::EncounterSimulation` is a fixed-timestep loop. Fixed, not
+variable, because combat tuning is expressed in seconds and a variable step makes
+the same input produce different outcomes on a fast and a slow device. Each frame
+an accumulator runs as many fixed steps as the elapsed time allows (capped, so a
+hitch cannot spiral).
 
 One step runs in a fixed, deliberate order:
 
@@ -65,42 +75,65 @@ One step runs in a fixed, deliberate order:
 5. Apply movement and turning.
 6. Resolve the blows collected in step 1, at the positions reached in step 5.
 
-Resolving **after** movement is what makes a swing land where the target
-actually is at the moment of impact, rather than where it was when the animation
-started.
+Resolving **after** movement is what makes a swing land where the target actually
+is at the moment of impact, rather than where it was when the animation started.
 
 ### One authority over position
 
 The player and the enemies are different only in where their intent comes from.
-`PlayerInputDriver` and `EnemyBrain` both implement `ICombatantDriver` and both
-return a `CombatIntent`. The simulation cannot tell them apart. This is why:
+`FSbPlayerDriver` (input) and `EnemyBrain` both implement `ICombatantDriver` and
+both return a `CombatIntent`. The simulation cannot tell them apart. This is why:
 
 - The player and enemies move, turn, attack and get staggered by identical code.
 - An AI bug can be reproduced by replaying player input.
-- Nothing in the Unity layer ever writes a position.
+- Nothing in the Unreal layer ever writes a position.
 
-`CombatantView` copies `Combatant.Position` onto a transform and never assigns
-it. The core is the only thing that decides where anything is.
+`AShadowboundCombatantActor` copies the core's position and facing onto its
+transform every frame and never assigns them back. Its capsule is `NoCollision`,
+because a physics body would be a second, conflicting authority over where the
+Warden is. The core is the only thing that decides.
 
 ### Determinism
 
 Everything random comes from `DeterministicRng` (PCG32), and there is exactly
 **one** stream per session — loot and combat share it. That is deliberate: two
 streams would mean a save recorded only one of them, so loading would let combat
-rolls replay values loot had already consumed and the two would silently diverge
-from the run they were meant to reproduce.
+rolls replay values loot had already consumed.
 
 Each enemy forks its own sub-stream from a **stable** hash of its id, so changing
 one creature's behaviour cannot shift another's. The hash is FNV-1a written by
-hand rather than `string.GetHashCode`, because .NET randomises string hashes per
-process — using the built-in would mean the same seed played out differently on
-every launch.
+hand rather than a language built-in, because several runtimes randomise string
+hashes per process — using one would mean the same seed played out differently on
+every launch. The C# and C++ implementations are byte-for-byte the same arithmetic
+and are verified to agree (see `Verification.md`).
+
+## Coordinates: where the two worlds meet
+
+The core simulates in its own coordinates: **Y up, facing 0 = +Z**, one unit = one
+metre. Unreal is **Z up, X forward, yaw 0 = +X**, one unit = one centimetre.
+
+`Source/Shadowbound/Public/ShadowboundConvert.h` is the only place that converts:
+
+```
+ToUnreal(Float3 v)  =  FVector(v.Z, v.X, v.Y) * 100
+ToCore(FVector v)   =  Float3(v.Y/100, v.Z/100, v.X/100)
+```
+
+The mapping is a proper rotation (determinant +1) times the unit scale, with two
+useful consequences:
+
+- **Core facing degrees are already Unreal yaw**, so no rotation conversion is
+  needed — `FacingToRotator(f) = FRotator(0, f, 0)`.
+- The transform round-trips exactly.
+
+Nothing outside that header converts coordinates, and the engine layer only
+converts *from* the core.
 
 ## Save format
 
-Unity's `JsonUtility` is `UnityEngine`, so the core is not allowed to use it. The
-core ships its own reader and writer instead, which has the useful side effect
-that the save format is testable, versioned and inspectable.
+The C# core ships its own JSON reader and writer, because Unity's `JsonUtility` was
+an engine type and the core could not use it. The useful side effect is that the
+save format is testable, versioned and inspectable.
 
 ```
 SaveSerializer.Serialize(save)  ->  JSON text
@@ -108,40 +141,30 @@ SaveSlotManager                  ->  ISaveStorage (file, memory, or cloud)
 SaveMigration.Migrate(save)      ->  upgrades an old file in memory
 ```
 
-Migration runs on **load**, not on save. An old file stays on disk in its
-original form until the player actually loads and re-saves it, so a failed
-upgrade does not destroy the only copy.
-
-`ISaveStorage` keeps the core free of file APIs. `FileSaveStorage` in the Game
-assembly supplies the real implementation, writing to a temporary file and moving
-it into place so an interrupted write cannot leave a truncated file where a
-complete save used to be.
+Migration runs on **load**, not on save, so a failed upgrade does not destroy the
+only copy. Save serialisation is a later migration phase; the C# implementation of
+it is unchanged and still tested.
 
 ## Presentation is generated, not authored
 
-There are no committed `.unity` scenes, `.prefab` files, or `.asset` materials.
-They are fragile, unreviewable in a diff, and impossible to verify without
-opening the editor.
+There are no committed `.umap` scenes or authored meshes. They are fragile,
+unreviewable in a diff, and impossible to verify without opening the editor.
 
-Instead:
-
-- `GameBootstrap` builds the whole game at runtime from primitives: session,
-  arena, player, enemies, camera, HUD. Drop it on one GameObject and press Play.
-- `ProjectSetup` (menu: **Shadowbound**) writes the scene file, registers it as
-  the build scene, and configures the Android player.
-
-The committed source of truth for configuration is code, where it can be
-reviewed and reasoned about. Real art replaces the primitive shapes in
-`GameBootstrap.CreateView`; nothing else has to change.
+Instead `AShadowboundGameMode` builds the whole game at runtime from engine
+primitives: arena, player, enemies, HUD. `AShadowboundPlayerController` builds its
+Enhanced Input mapping context and actions in C++, so no `.uasset` input assets are
+committed either. The committed source of truth for configuration is code, where
+it can be reviewed and reasoned about. Real art replaces the placeholder meshes; no
+game rule changes.
 
 ## Where new code goes
 
 | You are adding | Put it in |
 | --- | --- |
-| A damage formula, an AI decision, a loot rule | `Core` — and test it |
-| Reading input, drawing, sound, camera | `Game` |
-| A menu item, an asset generator, a validator | `Editor` |
+| A damage formula, an AI decision, a loot rule | `Source/ShadowboundCore` (C++) — and test it in `Tests/ShadowboundCore.Cpp` |
+| Reading input, drawing, sound, camera, actor lifecycle | `Source/Shadowbound` |
+| A rule that already exists in C# and is not yet ported | Port it to `Source/ShadowboundCore` and port its tests too |
 
-If you are tempted to put a rule in `Game` because it needs an engine type, the
-rule almost certainly wants to be split: the decision belongs in `Core`, and the
-engine type is an output of that decision.
+If you are tempted to put a rule in the Unreal layer because it needs an engine
+type, the rule almost certainly wants to be split: the decision belongs in the
+core, and the engine type is an output of that decision.

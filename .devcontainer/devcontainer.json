@@ -10,7 +10,7 @@
   "forwardPorts": [6080, 5901],
   "portsAttributes": {
     "6080": {
-      "label": "Unity Cloud Desktop",
+      "label": "Shadowbound Cloud Desktop",
       "protocol": "http"
     },
     "5901": {

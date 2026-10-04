@@ -11,169 +11,121 @@ combat, semi-open world, story-driven PvE.
 
 ---
 
+## Engine
+
+**Unreal Engine 5.6** is the primary engine of this repository, targeting
+**Android ARM64**. This repository *is* the Unreal project: `Shadowbound.uproject`
+and `Source/` live at the root, and there is no separate engine folder.
+
+The project was previously a Unity 6 project. It has been migrated to Unreal; the
+full audit, the system-by-system mapping and the phase plan are in
+[MIGRATION_PLAN.md](MIGRATION_PLAN.md). The Unity assets, packages and project
+settings have been removed.
+
+---
+
 ## Current status
 
 | Area | State |
 | --- | --- |
-| Repository + Unity 6 project scaffolding | Done |
-| Pure-C# game-logic core (combat, AI, items, quests, world, saves) | **Done — 563 tests passing** |
-| Headless encounter + session integration | Done, tested |
-| Authored content (creatures, items, quests, chapters, regions) | Done — validated by a tested validator |
-| Unity layer (input, camera, views, HUD, menu, saves) | **Type-checks against real Unity assemblies** — never executed |
-| In-game menu (equipment, consumables, attributes, save/load, resume) | Written — never executed |
-| Editor tooling (scene setup, Android config, CI build entry) | Written — **not compiled** (no UnityEditor reference assembly) |
-| GitHub Actions CI (verify + APK build via game-ci) | **Running** — verify passes on GitHub (563 tests); Android job awaits a Unity licence secret |
-| Android APK | **Not produced** — requires Unity with the Android module, or the CI `android` job with a Unity licence secret |
+| Unreal project (`Shadowbound.uproject`, `Source/`, `Config/`) | Written — **never compiled** (no Unreal Engine in the build environment) |
+| Engine-free C# core (`Core/`) — combat, AI, items, quests, world, saves | **Done — 563 tests passing** |
+| Engine-free C++ core (`Source/ShadowboundCore/`) — ported combat/encounter slice | **Done — 82 tests passing** |
+| Unreal game layer (`Source/Shadowbound/`) — arena, player, enemies, HUD, input, game mode | Written — **never compiled or run** |
+| Android build (RunUAT `BuildCookRun`) | Scripted (`Tools/build-android.sh`) — **no APK has been produced** |
+| GitHub Actions CI | `verify` gates run; the `android` job builds only where Unreal Engine is available |
 
 ### Read this before assuming it works
 
-The **game rules are verified by execution**: `Tools/test-core.sh` compiles the
-real core sources under Unity 6's exact constraints and runs 563 tests against
-them. That part is not a claim, it is an observation.
+Two things are verified **by execution**, here, on a machine with no game engine
+installed:
 
-The **Game assembly is verified to compile**, against real Unity reference
-assemblies, with 0 errors and 0 warnings. Type-checking it for the first time
-immediately found genuine compile errors a hand review had missed — a member
-declared as both a field and a method, and a property shadowing
-`System.IO.Directory`.
+- The C# core rules: `bash Tools/test-core.sh` compiles the real sources and runs
+  **563 tests** against them.
+- The C++ core rules: `bash Tools/test-core-cpp.sh` compiles them with a plain
+  C++ compiler (`-std=c++17 -Wall -Wextra -Werror`) and runs **82 tests**. The two
+  implementations are proven to agree on the RNG stream and the stable hash.
 
-An audit against the standard "is the runtime path actually connected?" found
-seven things that were fully built, fully tested, and **completely unreachable
-while playing**: quest rewards were never granted and the story could not advance
-past its first quest; no item could ever be equipped; the world's regions could
-not be travelled to at all, so two quest objectives were in places the player
-could not go; the menu was keyboard-only on a platform with no keyboard;
-consumables could never be used; attribute points could never be spent (and would
-have vanished on reload even if they could); and the menu drew most of its rows
-below the edge of the screen. All seven are fixed, and the audits that found them
-— including further defects the travel and save tests then exposed — are written
-up in `Documentation/Verification.md`.
+The **Unreal game layer has not been compiled or run.** No Unreal Engine is
+installed in the environment this was written in, so there is no `.uproject`
+compile, no Play session, no APK, and nothing rendered. `Tools/build-android.sh`
+reports this honestly and exits non-zero rather than pretending otherwise.
 
-**Nothing has been executed, seen, or installed.** There is no Unity in the
-environment this was built in. No APK exists. Nothing visual has been rendered,
-and the Editor assembly has not been compiled at all.
+`Documentation/Verification.md` states exactly what was run and what was not.
+Read it before trusting anything here.
 
-`Documentation/Verification.md` states exactly what was run and what was not, and
-lists the defects each check caught. Read it before trusting anything here.
-
-### Three commands to check what can be checked
+### Commands to check what can be checked
 
 ```bash
-bash Tools/test-core.sh         # purity gate + 563 tests
-bash Tools/check-syntax.sh      # every C# file parses at C# 9
-bash Tools/check-unity-layer.sh # Game assembly type-checks against Unity
+bash Tools/test-core.sh          # C# purity gate + 563 tests
+bash Tools/test-core-cpp.sh      # C++ purity gate + 82 tests (no engine needed)
+bash Tools/check-core-purity.sh  # both cores must stay engine-free
+bash Tools/check-unreal-layout.sh# the Unreal project layout is complete & Unity-free
+bash Tools/build-android.sh      # RunUAT BuildCookRun; fails honestly without UE
 ```
-
-```
-check-core-purity: OK (core is engine-free)
-Passed!  - Failed: 0, Passed: 563, Skipped: 0, Total: 563
-check-syntax: OK (47 files parse as C# 9, no syntax errors)
-Build succeeded.  0 Warning(s)  0 Error(s)
-```
-
----
-
-## Getting it running
-
-```bash
-# 1. Verify everything that can be verified without an engine.
-bash Tools/test-core.sh            # core: purity, Unity constraints, 563 tests
-bash Tools/check-syntax.sh         # all C# parses at Unity's language level
-bash Tools/check-unity-layer.sh    # Game assembly type-checks against Unity
-```
-
-```
-# 2. Open this folder in Unity 6 (6000.0 LTS+), then run the menu item:
-#      Shadowbound -> Set Up Project
-#    It creates the scene, registers it for the build, configures the Android
-#    player, and validates the content.
-#
-# 3. Press Play.      Keyboard + mouse in the Editor.
-#    Build the APK:    Shadowbound -> Build Android APK
-```
-
-Full instructions, controls and troubleshooting:
-[Documentation/Building.md](Documentation/Building.md).
-
----
-
-## Why the code is split in two
-
-The project is divided into a **pure C# core** and a **thin Unity layer**. This
-is an architectural decision, not a stylistic one.
-
-```
-Assets/Scripts/Core/   ->  game rules. No UnityEngine. Fully testable.
-Assets/Scripts/Game/   ->  MonoBehaviours. Turn input into core intent,
-                           and core output into transforms, VFX and audio.
-Assets/Scripts/Editor/ ->  tooling: scene setup, Android config, validation.
-```
-
-The boundary is **enforced by the compiler**, in three independent places:
-
-- `Shadowbound.Core.asmdef` sets `"noEngineReferences": true`. Unity refuses to
-  compile the core if any file touches `UnityEngine`.
-- `Tools/check-core-purity.sh` reproduces that rule on the command line, so a
-  violation fails before Unity is opened.
-- `Tests/Shadowbound.Core.Build` compiles the core sources against
-  `netstandard2.1` with `LangVersion 9.0` — Unity 6's exact API surface and
-  language level. C# 10 syntax or a .NET-10-only API fails here instead of
-  failing later in the editor.
-
-The payoff: damage maths, AI decisions, loot rolls, progression curves and save
-compatibility are verifiable without launching Unity. "This feature is done" can
-be backed by a test that actually ran.
-
-Core never references the engine, and the engine is never the only authority over
-game state — the simulation owns every position, and the Unity layer only copies.
-See [Documentation/Architecture.md](Documentation/Architecture.md).
-
----
-
-## Requirements
-
-- **Unity 6** (6000.0 LTS or newer) — to open, play and build
-- **Unity Android Build Support** (SDK, NDK, JDK) — to produce an APK
-- **.NET SDK 8.0+** — only to run the core test suite
-
-The test suite needs no Unity. Unity needs no .NET SDK.
 
 ---
 
 ## Repository layout
 
 ```
-Assets/
-  Scripts/Core/        pure C# game logic — no engine references
-  Scripts/Game/        Unity layer: input, camera, views, HUD, save storage
-  Scripts/Editor/      scene setup, Android configuration, content validation
-  Scenes/              generated by Shadowbound -> Set Up Project
-Packages/              Unity package manifest (URP, Input System, UGUI)
-ProjectSettings/       Unity project configuration
-Tools/                 command-line verification scripts
-Tests/                 .NET projects: core tests, plus a Unity-layer type-check
-Documentation/         architecture, design, building, verification status
-Builds/                APK output (git-ignored)
+Shadowbound.uproject     the Unreal project descriptor
+Config/                  DefaultEngine.ini (Android, GameMode), DefaultInput.ini, DefaultGame.ini
+Source/
+  ShadowboundCore/       engine-free C++ game logic (standard library only)
+  Shadowbound/           the Unreal game layer: actors, controller, HUD, game mode
+Core/                    the original engine-free C# core (kept until each slice is ported)
+Tests/
+  Shadowbound.Core.Tests/     xUnit suite for the C# core (563 tests)
+  Shadowbound.Core.Build/     compiles Core/ under Unity-6-era constraints (C# 9, netstandard2.1)
+  ShadowboundCore.Cpp/        the C++ core test suite (82 tests)
+Tools/                   command-line verification and build scripts
+Documentation/           architecture, design, building, verification status
+MIGRATION_PLAN.md        the audit and plan this migration follows
 ```
 
-## Note on committed configuration
+## The engine boundary
 
-Only `ProjectSettings/ProjectVersion.txt` is hand-authored. Everything else in
-`ProjectSettings/` is generated by Unity on first open, and the settings that
-actually matter are applied by the editor tooling.
+Game rules live in an **engine-free core**; the engine layer only turns input into
+intent and core state into transforms, VFX and audio. This is enforced, not
+conventional:
 
-No `.unity` scenes, `.prefab` files or `.asset` materials are committed. They are
-fragile, unreviewable in a diff, and impossible to verify without the editor.
-Instead `GameBootstrap` assembles the whole game at runtime from primitives —
-session, arena, player, enemies, camera, HUD — so the scene on disk stays almost
-empty and nothing can drift out of sync with the code. Real art replaces the
-primitive shapes in `GameBootstrap.CreateView`; no game rule changes.
+- `Tools/check-core-purity.sh` fails if the C# core names any Unity API, or the
+  C++ core includes anything other than its own `Sb*.h` headers (or uses Unreal
+  reflection macros). The one exception is `ShadowboundCoreModule.cpp`, which
+  exists only to register the module and is excluded from the standalone build.
+- The C++ core depends only on the C++ standard library, which is what lets it be
+  compiled and tested by `Tools/test-core-cpp.sh` **without Unreal Engine**.
+
+The payoff: damage maths, AI decisions, loot rolls, progression curves and save
+compatibility are verifiable without launching an editor. "This is done" is
+backed by a test that actually ran.
+
+The core simulates in its own coordinates (Y up, one unit = one metre). The
+Unreal layer converts through `Source/Shadowbound/Public/ShadowboundConvert.h`,
+and **copies positions from the core — never writes back**. The simulation is the
+single authority over where anything is.
+
+See [Documentation/Architecture.md](Documentation/Architecture.md).
+
+---
+
+## Requirements
+
+| Task | Needs |
+| --- | --- |
+| Run the core test suites | .NET SDK 8.0+ (C#) and a C++17 compiler (C++) |
+| Open, play and build the game | Unreal Engine 5.6 with Android platform support |
+| Produce an APK | Unreal Engine 5.6 + Android SDK/NDK/JDK |
+
+The core test suites need no Unreal Engine. Unreal Engine needs no .NET SDK.
 
 ## Documentation
 
 | Document | Contents |
 | --- | --- |
-| [Architecture.md](Documentation/Architecture.md) | Assembly boundaries, simulation model, determinism, save format |
+| [Architecture.md](Documentation/Architecture.md) | Module boundaries, the engine-free core, simulation model, determinism, coordinate conversion |
 | [Design.md](Documentation/Design.md) | The original world, factions, creatures and abilities |
 | [Building.md](Documentation/Building.md) | Setup, controls, Android build, troubleshooting |
 | [Verification.md](Documentation/Verification.md) | **What has been executed and verified, and what has not** |
+| [MIGRATION_PLAN.md](MIGRATION_PLAN.md) | The Unity → Unreal audit, mapping and phase plan |

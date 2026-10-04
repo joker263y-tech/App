@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    Compiles the REAL core sources from Assets/Scripts/Core, using the same
-    constraints Unity 6 imposes:
+    Compiles the REAL core sources from Core/, using the same constraints the
+    original Unity target imposed:
       * netstandard2.1 -> Unity's API profile. Using a .NET 10-only API here
         fails, instead of failing later inside the editor.
       * LangVersion 9.0 -> Unity 6 ships C# 9. C# 10+ syntax (file-scoped
@@ -25,9 +25,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="$(MSBuildThisFileDirectory)../../Assets/Scripts/Core/**/*.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../Core/**/*.cs" />
     <!-- Unity's .meta sidecars are not source. -->
-    <Compile Remove="$(MSBuildThisFileDirectory)../../Assets/Scripts/Core/**/*.meta" />
+    <Compile Remove="$(MSBuildThisFileDirectory)../../Core/**/*.meta" />
   </ItemGroup>
 
   <Target Name="EnforceCorePurity" BeforeTargets="BeforeCompile">
