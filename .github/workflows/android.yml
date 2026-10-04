@@ -28,10 +28,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup .NET 8 (Godot C# target framework)
+      - name: Setup .NET (8 and 9 - the csproj targets net9.0)
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: |
+            8.0.x
+            9.0.x
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -39,16 +41,35 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # NOTE: android-actions/setup-android@v3 is deliberately NOT used: it
+      # internally shells out to `sdkmanager tools`, a package that modern
+      # command-line tools no longer publish, so it fails with
+      # "Failed to find package 'tools'". GitHub's ubuntu runners already ship
+      # a complete Android SDK, so we drive sdkmanager ourselves instead.
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        run: |
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$SDK_ROOT" ]; then
+            echo "::error title=ENVIRONMENT LIMITATION::No Android SDK found at ${SDK_ROOT}"
+            exit 3
+          fi
+          echo "ANDROID_HOME=${SDK_ROOT}" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=${SDK_ROOT}" >> "$GITHUB_ENV"
+          echo "Using Android SDK at ${SDK_ROOT}"
 
       - name: Install Android SDK packages
         run: |
-          sdkmanager --install \
+          SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -1)"
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error title=ENVIRONMENT LIMITATION::sdkmanager not found under ${ANDROID_SDK_ROOT}/cmdline-tools"
+            exit 3
+          fi
+          echo "Using sdkmanager: ${SDKMANAGER}"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" --install \
             "platform-tools" \
             "build-tools;${ANDROID_BUILD_TOOLS}" \
             "platforms;${ANDROID_PLATFORM}"
-          echo "ANDROID_HOME=${ANDROID_SDK_ROOT}" >> "$GITHUB_ENV"
 
       - name: Install Godot 4.5 (.NET) editor
         run: |
