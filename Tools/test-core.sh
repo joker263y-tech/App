@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Runs the pure-C# core test suite. This is the project's primary quality gate.
+# Runs the pure-C# core test suite. This is the project's primary quality gate:
+# it proves the game rules work with no engine present at all.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,7 +24,7 @@ echo "==> Core purity gate"
 bash "$ROOT/Tools/check-core-purity.sh"
 
 echo ""
-echo "==> Building core (netstandard2.1, C# 9 - same constraints as Unity 6)"
+echo "==> Building core (netstandard2.1, C# 9 - portable, engine-free)"
 "$DOTNET" build "$ROOT/Tests/Shadowbound.Core.Build/Shadowbound.Core.Build.csproj" \
     --nologo -v minimal
 

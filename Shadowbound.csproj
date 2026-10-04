@@ -1,0 +1,36 @@
+<Project Sdk="Godot.NET.Sdk/4.5.0">
+
+  <!--
+    The Godot assembly.
+
+    All game rules live in the engine-free C# core (Core/, compiled by
+    Tests/Shadowbound.Core.Build). This project references it and adds only the
+    Godot presentation layer under scripts/: scenes, views, camera, input, HUD,
+    menu and save storage.
+
+    Core/ and Tests/ are excluded from Godot's implicit **/*.cs glob because
+    they are compiled by their own projects; including them here would duplicate
+    every type.
+  -->
+
+  <PropertyGroup>
+    <!-- net9.0 is the .NET version Godot 4.5's Android export templates support. -->
+    <TargetFramework>net9.0</TargetFramework>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Shadowbound</RootNamespace>
+    <AssemblyName>Shadowbound</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="Core/**/*.cs" />
+    <Compile Remove="Tests/Shadowbound.Core.Build/**/*.cs" />
+    <Compile Remove="Tests/Shadowbound.Core.Tests/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="Tests/Shadowbound.Core.Build/Shadowbound.Core.Build.csproj" />
+  </ItemGroup>
+
+</Project>

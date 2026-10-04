@@ -1,8 +1,12 @@
 name: CI
 
-# Verification gates that need no game engine. The Unreal Engine Android build
-# lives in its own workflow (.github/workflows/android.yml) because it has very
-# different resource requirements and reports its own outcome.
+# Verification gates that need no Android toolchain:
+#   * the engine-free core is pure and its 563 tests pass
+#   * the repository is a coherent Godot 4.5 project
+#   * the Godot C# assembly builds and a headless smoke test runs inside Godot
+#
+# The Android ARM64 export lives in its own workflow (.github/workflows/android.yml)
+# because it needs the Android SDK and the Godot export templates.
 
 on:
   push:
@@ -10,33 +14,46 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  GODOT_VERSION: '4.5-stable'
+
 jobs:
   verify:
-    name: Verify (cores + Unreal layout)
+    name: Verify (core + Godot project)
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup .NET 10
+      - name: Setup .NET 8 (Godot C# target framework)
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '8.0.x'
 
-      - name: Setup .NET 9
+      - name: Setup .NET 9 (core test target framework)
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '9.0.x'
 
-      - name: Core purity (C# and C++)
+      - name: Install Godot 4.5 (.NET) editor
+        run: |
+          curl -sSL -o godot.zip \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION%-*}-stable_mono_linux_x86_64.zip"
+          unzip -q godot.zip
+          BIN="$PWD/Godot_v${GODOT_VERSION%-*}-stable_mono_linux_x86_64/Godot_v${GODOT_VERSION%-*}-stable_mono_linux.x86_64"
+          test -x "$BIN"
+          echo "GODOT_BIN=$BIN" >> "$GITHUB_ENV"
+          echo "$(dirname "$BIN")" >> "$GITHUB_PATH"
+
+      - name: Core purity (engine-free C#)
         run: bash Tools/check-core-purity.sh
 
-      - name: C# core tests (563)
+      - name: Core tests (563)
         run: bash Tools/test-core.sh
 
-      - name: C++ core tests (82)
-        run: bash Tools/test-core-cpp.sh
+      - name: Godot project layout
+        run: bash Tools/check-godot-project.sh
 
-      - name: Unreal project layout
-        run: bash Tools/check-unreal-layout.sh
+      - name: Build Godot C# assembly and run headless smoke test
+        run: bash Tools/test-godot.sh "$GODOT_BIN"

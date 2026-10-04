@@ -1,0 +1,48 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://scripts/GameRoot.cs" id="1_root"]
+[ext_resource type="PackedScene" path="res://scenes/Arena.tscn" id="2_arena"]
+[ext_resource type="Script" path="res://scripts/CameraRig.cs" id="3_camera"]
+[ext_resource type="Script" path="res://scripts/PlayerInputReader.cs" id="4_input"]
+[ext_resource type="PackedScene" path="res://scenes/Hud.tscn" id="5_hud"]
+[ext_resource type="PackedScene" path="res://scenes/GameMenu.tscn" id="6_menu"]
+
+[sub_resource type="Environment" id="Environment_main"]
+ambient_light_source = 2
+ambient_light_color = Color(0.16, 0.17, 0.22, 1)
+ambient_light_energy = 1.0
+fog_enabled = true
+fog_light_color = Color(0.05, 0.055, 0.08, 1)
+fog_density = 0.012
+
+[node name="Main" type="Node3D"]
+script = ExtResource("1_root")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_main")
+
+[node name="KeyLight" type="DirectionalLight3D" parent="."]
+light_color = Color(0.86, 0.88, 1, 1)
+light_energy = 2.0
+shadow_enabled = true
+
+[node name="Arena" parent="." instance=ExtResource("2_arena")]
+
+[node name="Views" type="Node3D" parent="."]
+
+[node name="CameraRig" type="Node3D" parent="."]
+script = ExtResource("3_camera")
+
+[node name="Camera" type="Camera3D" parent="CameraRig"]
+fov = 55.0
+near = 0.15
+far = 400.0
+
+[node name="InputReader" type="Node" parent="."]
+script = ExtResource("4_input")
+
+[node name="UI" type="CanvasLayer" parent="."]
+
+[node name="Hud" parent="UI" instance=ExtResource("5_hud")]
+
+[node name="GameMenu" parent="UI" instance=ExtResource("6_menu")]

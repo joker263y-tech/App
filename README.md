@@ -13,14 +13,15 @@ combat, semi-open world, story-driven PvE.
 
 ## Engine
 
-**Unreal Engine 5.8** is the primary engine of this repository, targeting
-**Android ARM64** (target API 35, NDK r27c, build-tools 35.0.1, OpenJDK 21.0.3). This repository *is* the Unreal project: `Shadowbound.uproject`
-and `Source/` live at the root, and there is no separate engine folder.
+**Godot 4.5 (.NET / C#)** is the engine of this repository, targeting **Android
+ARM64** (target API 35, landscape). This repository *is* the Godot project:
+`project.godot` lives at the root.
 
-The project was previously a Unity 6 project. It has been migrated to Unreal; the
-full audit, the system-by-system mapping and the phase plan are in
-[MIGRATION_PLAN.md](MIGRATION_PLAN.md). The Unity assets, packages and project
-settings have been removed.
+The project has been migrated twice: **Unity 6 → Unreal Engine 5 → Godot 4.5**.
+The game's rules were always engine-free, so each migration has been a re-hosting
+of the presentation and input layers rather than a rewrite of the game. The
+Unreal layer (`Shadowbound.uproject`, `Source/`, `Config/`) is gone; the original
+Unity folders (`Assets/`, `Packages/`, `ProjectSettings/`) are gone too.
 
 ---
 
@@ -28,40 +29,45 @@ settings have been removed.
 
 | Area | State |
 | --- | --- |
-| Unreal project (`Shadowbound.uproject`, `Source/`, `Config/`) | Written — **never compiled** (no Unreal Engine in the build environment) |
 | Engine-free C# core (`Core/`) — combat, AI, items, quests, world, saves | **Done — 563 tests passing** |
-| Engine-free C++ core (`Source/ShadowboundCore/`) — ported combat/encounter slice | **Done — 82 tests passing** |
-| Unreal game layer (`Source/Shadowbound/`) — arena, player, enemies, HUD, input, game mode | Written — **never compiled or run** |
-| Android build (RunUAT `BuildCookRun`) | Scripted (`Tools/build-android.sh`) — **no APK has been produced**; the free GitHub runner is a proven **environment limitation** (see `Documentation/Building.md`) |
-| GitHub Actions CI | `ci.yml` runs the engine-free gates; `android.yml` packages ARM64 in a UE container and classifies the outcome |
+| Godot game layer (`scripts/`, `scenes/`) — arena, player, enemies, camera, input, HUD, menu, saves | **Done — builds clean, runs headless** |
+| Godot headless smoke test | **Passing** — RNG parity, session boot, a resolved fight, save round-trip |
+| Android ARM64 APK | **Produced and validated locally** — see below |
+| GitHub Actions CI | `ci.yml` runs the Godot gates; `android.yml` exports the ARM64 APK |
 
 ### Read this before assuming it works
 
-Two things are verified **by execution**, here, on a machine with no game engine
-installed:
+The following are verified **by execution**, on a machine with no game engine
+installed beyond Godot itself:
 
-- The C# core rules: `bash Tools/test-core.sh` compiles the real sources and runs
-  **563 tests** against them.
-- The C++ core rules: `bash Tools/test-core-cpp.sh` compiles them with a plain
-  C++ compiler (`-std=c++17 -Wall -Wextra -Werror`) and runs **82 tests**. The two
-  implementations are proven to agree on the RNG stream and the stable hash.
+- **The game rules:** `bash Tools/test-core.sh` compiles the real core sources and
+  runs **563 tests**.
+- **The Godot assembly:** `bash Tools/test-godot.sh` builds `Shadowbound.csproj`,
+  imports the project, and runs a headless smoke test **inside Godot** that proves
+  the deterministic RNG parity, boots a session, resolves a real fight and
+  round-trips a save.
+- **The main scene:** running `scenes/Main.tscn` headless assembles the game —
+  `Shadowbound ready: region 'grey-wilds', 5 hostiles, 5 quests, level 1`.
+- **A real APK:** `bash Tools/build-android.sh` produced
+  `build/android/shadowbound.apk` (98 MB) locally, containing
+  `lib/arm64-v8a/libgodot_android.so`, `assets/.godot/mono/publish/arm64/Shadowbound.dll`
+  and `Shadowbound.Core.dll`, with `package=com.shadowbound.thelastnight`,
+  `targetSdkVersion=35` and `screenOrientation=landscape`, signed by Godot's debug
+  keystore and verified with `apksigner`.
 
-The **Unreal game layer has not been compiled or run.** No Unreal Engine is
-installed in the environment this was written in, so there is no `.uproject`
-compile, no Play session, no APK, and nothing rendered. `Tools/build-android.sh`
-reports this honestly and exits non-zero rather than pretending otherwise.
-
-`Documentation/Verification.md` states exactly what was run and what was not.
-Read it before trusting anything here.
+What is **not** verified: the APK has not been installed on a physical device, and
+the GitHub Actions workflow has not yet run on GitHub (it was validated by running
+the same script locally). `Documentation/Verification.md` states exactly what was
+run and what was not.
 
 ### Commands to check what can be checked
 
 ```bash
-bash Tools/test-core.sh          # C# purity gate + 563 tests
-bash Tools/test-core-cpp.sh      # C++ purity gate + 82 tests (no engine needed)
-bash Tools/check-core-purity.sh  # both cores must stay engine-free
-bash Tools/check-unreal-layout.sh# the Unreal project layout is complete & Unity-free
-bash Tools/build-android.sh      # RunUAT BuildCookRun; exits 3 (ENVIRONMENT LIMITATION) without UE
+bash Tools/check-core-purity.sh   # the core must stay engine-free (Godot/Unity/Unreal)
+bash Tools/test-core.sh           # purity gate + 563 core tests
+bash Tools/check-godot-project.sh # the Godot project layout is complete and engine-clean
+bash Tools/test-godot.sh          # build the C# assembly + headless smoke test
+bash Tools/build-android.sh       # export the Android ARM64 APK (needs Godot + Android SDK)
 ```
 
 ---
@@ -69,41 +75,40 @@ bash Tools/build-android.sh      # RunUAT BuildCookRun; exits 3 (ENVIRONMENT LIM
 ## Repository layout
 
 ```
-Shadowbound.uproject     the Unreal project descriptor
-Config/                  DefaultEngine.ini (Android, GameMode), DefaultInput.ini, DefaultGame.ini
-Source/
-  ShadowboundCore/       engine-free C++ game logic (standard library only)
-  Shadowbound/           the Unreal game layer: actors, controller, HUD, game mode
-Core/                    the original engine-free C# core (kept until each slice is ported)
+project.godot            the Godot project descriptor (landscape, C#)
+export_presets.cfg       the Android ARM64 export preset
+Shadowbound.csproj       the Godot C# assembly (references the core)
+Shadowbound.sln          required by Godot's .NET export to bundle the assembly
+icon.svg                 the project icon
+scenes/                  authored scenes: Main, Arena, Player, Enemy, Hud, GameMenu
+scripts/                 the Godot game layer (C#): views, camera, input, HUD, menu, saves
+Core/                    the engine-free C# game rules (the source of truth)
 Tests/
-  Shadowbound.Core.Tests/     xUnit suite for the C# core (563 tests)
-  Shadowbound.Core.Build/     compiles Core/ under Unity-6-era constraints (C# 9, netstandard2.1)
-  ShadowboundCore.Cpp/        the C++ core test suite (82 tests)
+  Shadowbound.Core.Tests/  xUnit suite for the core (563 tests)
+  Shadowbound.Core.Build/  compiles Core/ as a portable netstandard2.1 library
+  Godot/                   the headless Godot smoke test
 Tools/                   command-line verification and build scripts
 Documentation/           architecture, design, building, verification status
-MIGRATION_PLAN.md        the audit and plan this migration follows
 ```
 
 ## The engine boundary
 
-Game rules live in an **engine-free core**; the engine layer only turns input into
-intent and core state into transforms, VFX and audio. This is enforced, not
-conventional:
+Game rules live in an **engine-free core**; the Godot layer only turns input into
+intent and core state into transforms and UI. This is enforced, not conventional:
 
-- `Tools/check-core-purity.sh` fails if the C# core names any Unity API, or the
-  C++ core includes anything other than its own `Sb*.h` headers (or uses Unreal
-  reflection macros). The one exception is `ShadowboundCoreModule.cpp`, which
-  exists only to register the module and is excluded from the standalone build.
-- The C++ core depends only on the C++ standard library, which is what lets it be
-  compiled and tested by `Tools/test-core-cpp.sh` **without Unreal Engine**.
+- `Tools/check-core-purity.sh` fails if the core names any Godot, Unity or Unreal
+  API, branches on an engine define, or uses an engine inspector attribute.
+- The core depends only on the .NET base class library, which is what lets it be
+  compiled and tested with no engine at all.
 
 The payoff: damage maths, AI decisions, loot rolls, progression curves and save
-compatibility are verifiable without launching an editor. "This is done" is
-backed by a test that actually ran.
+compatibility are verifiable without launching an editor. "This is done" is backed
+by a test that actually ran.
 
-The core simulates in its own coordinates (Y up, one unit = one metre). The
-Unreal layer converts through `Source/Shadowbound/Public/ShadowboundConvert.h`,
-and **copies positions from the core — never writes back**. The simulation is the
+The core simulates in its own coordinates (Y up, one unit = one metre, facing 0 =
++Z). Godot is also Y-up and in metres, so positions copy across component for
+component; only rotation is converted (`scripts/CoordinateConvert.cs`). The Godot
+layer **copies positions from the core — never writes back**. The simulation is the
 single authority over where anything is.
 
 See [Documentation/Architecture.md](Documentation/Architecture.md).
@@ -114,11 +119,11 @@ See [Documentation/Architecture.md](Documentation/Architecture.md).
 
 | Task | Needs |
 | --- | --- |
-| Run the core test suites | .NET SDK 8.0+ (C#) and a C++17 compiler (C++) |
-| Open, play and build the game | Unreal Engine 5.6 with Android platform support |
-| Produce an APK | Unreal Engine 5.6 + Android SDK/NDK/JDK |
+| Run the core test suite | .NET SDK 9.0+ |
+| Build and run the game | Godot 4.5 (.NET) |
+| Produce an APK | Godot 4.5 (.NET) + Android SDK (build-tools 35.0.1, platform 35) + JDK 17 |
 
-The core test suites need no Unreal Engine. Unreal Engine needs no .NET SDK.
+The core test suite needs no engine. Godot needs no Android SDK until you export.
 
 ## Documentation
 
@@ -128,4 +133,3 @@ The core test suites need no Unreal Engine. Unreal Engine needs no .NET SDK.
 | [Design.md](Documentation/Design.md) | The original world, factions, creatures and abilities |
 | [Building.md](Documentation/Building.md) | Setup, controls, Android build, troubleshooting |
 | [Verification.md](Documentation/Verification.md) | **What has been executed and verified, and what has not** |
-| [MIGRATION_PLAN.md](MIGRATION_PLAN.md) | The Unity → Unreal audit, mapping and phase plan |

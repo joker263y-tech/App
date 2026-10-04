@@ -10,61 +10,46 @@ A wrong armour formula does not crash; it quietly makes late-game combat trivial
 So the rules live in a place where they can be executed and asserted, and the
 engine only does what only an engine can do: read input, draw, and play sound.
 
-## The migration, and why there are two cores
+## Three engines, one core
 
-The project was a Unity 6 project and is being migrated to **Unreal Engine 5**.
-The rules were always engine-free, so the migration is a re-hosting of the
-presentation and input layers, not a rewrite of the game.
-
-Because the port is done in reviewed slices rather than as one big-bang rewrite,
-both cores exist for now:
+The project was a Unity 6 project, then Unreal Engine 5, and is now **Godot 4.5**.
+The rules were always engine-free, so each migration re-hosted the presentation and
+input layers instead of rewriting the game.
 
 ```
-Core/                       the original engine-free C# rules (all systems)
-Source/ShadowboundCore/     the ported engine-free C++ rules (encounter slice)
-Source/Shadowbound/         the Unreal game layer (was Assets/Scripts/Game)
+Core/                 the engine-free C# rules (all systems — the source of truth)
+scripts/              the Godot game layer (C#): views, camera, input, HUD, menu, saves
+scenes/               the authored Godot scenes
+Shadowbound.csproj    compiles scripts/ and references the core
 ```
 
-`MIGRATION_PLAN.md` is the authoritative list of what is ported and what is not.
-As each slice is ported, its C# original and tests stay until the C++ slice and
-its tests are in place; then the C# can be retired.
+The core is written in C#, which Godot runs directly (Godot 4 supports C# on
+desktop and Android). This is why the migration reused 12,000 lines of tested game
+rules instead of porting them again: the core was already engine-free and already
+C#, so it only had to be referenced by the Godot assembly.
 
-## Two boundaries, one rule
+## The boundary rule
 
-The rule is simple: **game rules never touch the engine.**
+**Game rules never touch the engine.**
 
-- **C++ (`Source/ShadowboundCore`).** Depends only on the C++ standard library.
-  `Tools/check-core-purity.sh` fails if any file includes anything other than a
-  local `Sb*.h` header, or uses Unreal reflection macros. The single exception is
-  `ShadowboundCoreModule.cpp`, which exists only to register the module and is
-  excluded from the standalone build. This is what lets `Tools/test-core-cpp.sh`
-  compile and run the rules **with no Unreal Engine installed**.
-- **C# (`Core/`).** The original boundary, still enforced: no `UnityEngine`, no
-  `UNITY_` conditionals, no inspector attributes.
+`Tools/check-core-purity.sh` fails if anything under `Core/` names a Godot, Unity
+or Unreal API, branches on a `UNITY_`/`GODOT` define, or uses an engine inspector
+attribute. The core depends only on the .NET base class library, which is what lets
+`Tools/test-core.sh` compile and run the rules **with no engine installed**.
 
-The engine layer (`Source/Shadowbound`) may reference both the engine and the core.
-The core references upward to nothing.
-
-## Module dependency direction
+The Godot layer may reference the core. The core references upward to nothing.
 
 ```
-  ShadowboundCore   (engine-free C++: standard library only)
-        ^
-        |  PublicDependencyNames
-        |
-    Shadowbound     (Unreal: Core, CoreUObject, Engine, InputCore, EnhancedInput)
+  Shadowbound  (Godot C#: scripts/, scenes/)  --->  Shadowbound.Core  (engine-free C#)
 ```
-
-`ShadowboundCore.Build.cs` depends on `Core` for exactly one reason — module
-registration — and no file but the registration file may include an engine header.
 
 ## The simulation model
 
-`ShadowboundCore::EncounterSimulation` is a fixed-timestep loop. Fixed, not
-variable, because combat tuning is expressed in seconds and a variable step makes
-the same input produce different outcomes on a fast and a slow device. Each frame
-an accumulator runs as many fixed steps as the elapsed time allows (capped, so a
-hitch cannot spiral).
+`Shadowbound.Core.Simulation.EncounterSimulation` is a fixed-timestep loop. Fixed,
+not variable, because combat tuning is expressed in seconds and a variable step
+makes the same input produce different outcomes on a fast and a slow device. Godot
+runs the step from `_PhysicsProcess`, so each physics tick advances the simulation
+by a fixed amount and the line-of-sight raycasts happen inside a valid physics pass.
 
 One step runs in a fixed, deliberate order:
 
@@ -81,17 +66,18 @@ is at the moment of impact, rather than where it was when the animation started.
 ### One authority over position
 
 The player and the enemies are different only in where their intent comes from.
-`FSbPlayerDriver` (input) and `EnemyBrain` both implement `ICombatantDriver` and
-both return a `CombatIntent`. The simulation cannot tell them apart. This is why:
+`PlayerDriver` (input) and `EnemyBrain` both implement `ICombatantDriver` and both
+return a `CombatIntent`. The simulation cannot tell them apart. This is why:
 
 - The player and enemies move, turn, attack and get staggered by identical code.
 - An AI bug can be reproduced by replaying player input.
-- Nothing in the Unreal layer ever writes a position.
+- Nothing in the Godot layer ever writes a position.
 
-`AShadowboundCombatantActor` copies the core's position and facing onto its
-transform every frame and never assigns them back. Its capsule is `NoCollision`,
-because a physics body would be a second, conflicting authority over where the
-Warden is. The core is the only thing that decides.
+`CombatantView` copies the core's position and facing onto its node every physics
+step and never assigns them back. Its node carries no collision body, because a
+physics body would be a second, conflicting authority over where the Warden is.
+Arena walls and pillars are `StaticBody3D` on the "world" layer — they exist for the
+line-of-sight raycast, not to push bodies around.
 
 ### Determinism
 
@@ -101,39 +87,30 @@ streams would mean a save recorded only one of them, so loading would let combat
 rolls replay values loot had already consumed.
 
 Each enemy forks its own sub-stream from a **stable** hash of its id, so changing
-one creature's behaviour cannot shift another's. The hash is FNV-1a written by
-hand rather than a language built-in, because several runtimes randomise string
-hashes per process — using one would mean the same seed played out differently on
-every launch. The C# and C++ implementations are byte-for-byte the same arithmetic
-and are verified to agree (see `Verification.md`).
+one creature's behaviour cannot shift another's. The hash is FNV-1a written by hand
+rather than a language built-in, because several runtimes randomise string hashes
+per process — using one would mean the same seed played out differently on every
+launch.
 
 ## Coordinates: where the two worlds meet
 
 The core simulates in its own coordinates: **Y up, facing 0 = +Z**, one unit = one
-metre. Unreal is **Z up, X forward, yaw 0 = +X**, one unit = one centimetre.
-
-`Source/Shadowbound/Public/ShadowboundConvert.h` is the only place that converts:
+metre. Godot is **Y up**, also in metres, so positions map one-to-one — there is no
+scale factor and no axis swap:
 
 ```
-ToUnreal(Float3 v)  =  FVector(v.Z, v.X, v.Y) * 100
-ToCore(FVector v)   =  Float3(v.Y/100, v.Z/100, v.X/100)
+ToGodot(Float3 v) = Vector3(v.X, v.Y, v.Z)
 ```
 
-The mapping is a proper rotation (determinant +1) times the unit scale, with two
-useful consequences:
-
-- **Core facing degrees are already Unreal yaw**, so no rotation conversion is
-  needed — `FacingToRotator(f) = FRotator(0, f, 0)`.
-- The transform round-trips exactly.
-
-Nothing outside that header converts coordinates, and the engine layer only
-converts *from* the core.
+Rotation is the only conversion. A Godot node's forward is `-Z` while the core's
+facing 0 points at `+Z`, so a core facing maps to a Godot Y rotation of
+`facing + 180°`. `scripts/CoordinateConvert.cs` is the only place that converts, and
+the Godot layer only converts *from* the core.
 
 ## Save format
 
-The C# core ships its own JSON reader and writer, because Unity's `JsonUtility` was
-an engine type and the core could not use it. The useful side effect is that the
-save format is testable, versioned and inspectable.
+The core ships its own JSON reader and writer, so the save format is testable,
+versioned and inspectable:
 
 ```
 SaveSerializer.Serialize(save)  ->  JSON text
@@ -142,29 +119,34 @@ SaveMigration.Migrate(save)      ->  upgrades an old file in memory
 ```
 
 Migration runs on **load**, not on save, so a failed upgrade does not destroy the
-only copy. Save serialisation is a later migration phase; the C# implementation of
-it is unchanged and still tested.
+only copy. `scripts/GodotSaveStorage.cs` implements `ISaveStorage` on Godot's
+`user://saves/`, and writes to a temporary file which is then moved into place, so a
+crash mid-write cannot truncate a good save.
 
-## Presentation is generated, not authored
+## Presentation: authored scenes, generated placeholder art
 
-There are no committed `.umap` scenes or authored meshes. They are fragile,
-unreviewable in a diff, and impossible to verify without opening the editor.
+The scene graph (environment, key light, arena, view container, camera rig, input
+reader, HUD, menu) is **authored** in `scenes/Main.tscn` and its children — the
+Godot-native way to compose a game. The placeholder *art* is generated at runtime
+(boxes and capsules from Godot's primitive meshes, tinted per archetype), so the
+committed source of truth for the layout stays reviewable and no binary mesh can
+drift out of step with the numbers the core is tuned against. Real art replaces the
+placeholders; no game rule changes.
 
-Instead `AShadowboundGameMode` builds the whole game at runtime from engine
-primitives: arena, player, enemies, HUD. `AShadowboundPlayerController` builds its
-Enhanced Input mapping context and actions in C++, so no `.uasset` input assets are
-committed either. The committed source of truth for configuration is code, where
-it can be reviewed and reasoned about. Real art replaces the placeholder meshes; no
-game rule changes.
+`scripts/Arena.cs` builds the floor, walls, line-of-sight pillars and the gate.
+`scripts/Hud.cs` draws the HUD and the on-screen controls directly with Godot
+`Control` primitives, and **hit-tests touches against the same rectangles it draws**,
+so a button can never be somewhere other than where it looks. `scripts/GameMenu.cs`
+uses real `Button` nodes and a pooled, paged row list.
 
 ## Where new code goes
 
 | You are adding | Put it in |
 | --- | --- |
-| A damage formula, an AI decision, a loot rule | `Source/ShadowboundCore` (C++) — and test it in `Tests/ShadowboundCore.Cpp` |
-| Reading input, drawing, sound, camera, actor lifecycle | `Source/Shadowbound` |
-| A rule that already exists in C# and is not yet ported | Port it to `Source/ShadowboundCore` and port its tests too |
+| A damage formula, an AI decision, a loot rule | `Core/` — and test it in `Tests/Shadowbound.Core.Tests` |
+| Reading input, drawing, sound, camera, node lifecycle | `scripts/` |
+| A new scene or UI surface | `scenes/` |
 
-If you are tempted to put a rule in the Unreal layer because it needs an engine
-type, the rule almost certainly wants to be split: the decision belongs in the
-core, and the engine type is an output of that decision.
+If you are tempted to put a rule in the Godot layer because it needs an engine type,
+the rule almost certainly wants to be split: the decision belongs in the core, and
+the engine type is an output of that decision.

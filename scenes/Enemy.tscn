@@ -1,0 +1,18 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/EnemyView.cs" id="1_enemy"]
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_enemy"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_boss"]
+size = Vector3(1.6, 2.2, 1.6)
+
+[node name="Enemy" type="Node3D"]
+script = ExtResource("1_enemy")
+
+[node name="Body" type="MeshInstance3D" parent="."]
+mesh = SubResource("CapsuleMesh_enemy")
+
+[node name="BossBody" type="MeshInstance3D" parent="."]
+visible = false
+mesh = SubResource("BoxMesh_boss")
